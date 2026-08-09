@@ -5,13 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class CVD(BaseModel):
-    """
-    Cumulative Volume Delta (кумулятивная дельта объёма).
-
-    Рассчитывается на основе потока сделок за период (например, 4 часа).
-    value — накопленная дельта с начала торгов.
-    delta — изменение за текущий период.
-    """
+    """Cumulative Volume Delta (кумулятивная дельта объёма)."""
     model_config = ConfigDict(populate_by_name=True)
 
     symbol: str  # Торговый символ

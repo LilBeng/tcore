@@ -3,8 +3,6 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from tcore.models.enums import Category
-
 
 class OpenInterest(BaseModel):
     """

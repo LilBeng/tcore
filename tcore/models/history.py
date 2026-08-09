@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from pydantic import ConfigDict, Field, field_validator, BaseModel
 
-from tcore.base.enums import OrderSide
+from tcore.models.enums import OrderSide
 
 
 class TradeHistory(BaseModel):

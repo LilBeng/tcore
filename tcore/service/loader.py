@@ -107,7 +107,7 @@ class HistoryDataLoader:
             max_retries: int = 3
     ) -> list[Ticker]:
         """
-        Загрузка тиков (рыночных данных).
+        Загрузка тиков (рыночных данных) [Обновление каждые 24 часа].
         """
         params = {"category": category.value}
         if symbol:
@@ -258,7 +258,7 @@ class HistoryDataLoader:
         logger.info(f"Loaded {len(result)} OI records for {symbol}")
         return result
 
-    async def load_funding_rate(
+    async def load_funding_rates(
             self,
             symbol: str,
             limit: int = 200,
