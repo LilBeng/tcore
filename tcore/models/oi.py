@@ -12,8 +12,8 @@ class OpenInterest(BaseModel):
 
     symbol: str = Field(alias="symbol")  # Торговый символ
     timestamp: datetime  # Время данных
-    oi_value: Decimal = Field(alias="openInterest")  # Общий открытый интерес
-    single_oi_value: Decimal = Field(alias="singleOpenInterest")  # Открытый интерес в базовой монете
+    oi_value: Decimal = Field(alias="singleOpenInterest")  # Общий открытый интерес
+    single_oi_value: Decimal = Field(alias="singleOpenInterest")  # Открытый интерес в базовой монете (В приоритете)
 
     @classmethod
     @field_validator('timestamp', mode='before')
