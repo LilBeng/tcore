@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from pydantic import ConfigDict, Field, field_validator, BaseModel
@@ -27,7 +27,7 @@ class TradeHistory(BaseModel):
     def parse_timestamp(cls, value) -> datetime:
         """Парсинг timestamp из миллисекунд в datetime"""
         if isinstance(value, (int, str)):
-            return datetime.fromtimestamp(int(value) / 1000)
+            return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
         return value
 
     @property

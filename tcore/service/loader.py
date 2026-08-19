@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 @singleton
-class HistoryDataLoader:
+class HistoryDataLoader(object):
     """Асинхронный загрузчик исторических данных с ByBit"""
 
     def __init__(self, session: HTTP) -> None:
@@ -122,6 +122,11 @@ class HistoryDataLoader:
         if not resp:
             return []
 
+        for item in resp['result']['list']:
+            try:
+                Ticker(**item)
+            except:
+                print(item)
         return [Ticker(**item) for item in resp['result']['list']]
 
     async def load_klines(

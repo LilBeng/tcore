@@ -36,8 +36,8 @@ class RiskParameters(BaseModel):
     """Параметры риска инструмента"""
     model_config = ConfigDict(populate_by_name=True)
 
-    price_limit_ratio_x: Decimal = Field(alias="priceLimitRatioX")  # <0.15 норма
-    price_limit_ratio_y: Decimal = Field(alias="priceLimitRatioY")  # <0.3 норма
+    ratio_x: Decimal = Field(alias="priceLimitRatioX")  # <0.15 норма
+    ratio_y: Decimal = Field(alias="priceLimitRatioY")  # <0.3 норма
 
 
 class Instrument(BaseModel):

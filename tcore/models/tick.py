@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Ticker(BaseModel):
@@ -29,25 +29,15 @@ class Ticker(BaseModel):
     open_interest: Decimal = Field(alias="openInterest")
     open_interest_value: Decimal = Field(alias="openInterestValue")
 
+    single_open_interest: Decimal = Field(alias="singleOpenInterest")
+    single_open_interest_value: Decimal = Field(alias="singleOpenInterestValue")
+
     # Ставка финансирования
     funding_rate: Decimal = Field(alias="fundingRate")
 
-    @property
-    def price_change_24h(self) -> Decimal:
-        """Абсолютное изменение цены за 24 часа"""
-        return self.last_price - self.prev_price_24h
-
-    @property
-    def price_change_percent(self) -> Decimal:
-        """Изменение цены в процентах за 24 часа"""
-        return self.price_24h_pcnt * 100
-
-    @property
-    def is_funding_positive(self) -> bool:
-        """Проверка положительной ставки финансирования"""
-        return self.funding_rate > 0
-
-    @property
-    def spread_mark_to_index(self) -> Decimal:
-        """Спред между маркировочной и индексной ценой"""
-        return self.mark_price - self.index_price
+    @model_validator(mode='before')
+    @classmethod
+    def handle_empty_strings(cls, values):
+        if isinstance(values, dict) and values.get('fundingRate') == '':
+            values['fundingRate'] = '0'
+        return values

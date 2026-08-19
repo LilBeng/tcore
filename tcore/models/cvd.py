@@ -12,13 +12,3 @@ class CVD(BaseModel):
     timestamp: datetime  # Время закрытия периода (например, конец 4-часовой свечи)
     value: Decimal  # Накопленное значение CVD с начала сессии
     delta: Decimal  # Дельта за текущий период (сумма покупок - сумма продаж)
-
-    @property
-    def is_bullish(self) -> bool:
-        """Положительная дельта — покупатели агрессивнее"""
-        return self.delta > 0
-
-    @property
-    def is_bearish(self) -> bool:
-        """Отрицательная дельта — продавцы агрессивнее"""
-        return self.delta < 0

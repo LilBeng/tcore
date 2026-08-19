@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
@@ -31,7 +31,7 @@ class Kline(BaseModel):
         """
         return cls(
             symbol=symbol,
-            timestamp=datetime.fromtimestamp(int(data[0]) / 1000),
+            timestamp=datetime.fromtimestamp(int(data[0]) / 1000, tz=timezone.utc),
             open=Decimal(str(data[1])),
             high=Decimal(str(data[2])),
             low=Decimal(str(data[3])),
@@ -39,33 +39,3 @@ class Kline(BaseModel):
             volume=Decimal(str(data[5])),
             turnover=Decimal(str(data[6]))
         )
-
-    @property
-    def is_bullish(self) -> bool:
-        """Бычья свеча (закрытие выше открытия)"""
-        return self.close > self.open
-
-    @property
-    def is_bearish(self) -> bool:
-        """Медвежья свеча (закрытие ниже открытия)"""
-        return self.close < self.open
-
-    @property
-    def body(self) -> Decimal:
-        """Размер тела свечи (абсолютное значение)"""
-        return abs(self.close - self.open)
-
-    @property
-    def wick_upper(self) -> Decimal:
-        """Размер верхней тени"""
-        return self.high - max(self.open, self.close)
-
-    @property
-    def wick_lower(self) -> Decimal:
-        """Размер нижней тени"""
-        return min(self.open, self.close) - self.low
-
-    @property
-    def total_range(self) -> Decimal:
-        """Полный диапазон свечи (high - low)"""
-        return self.high - self.low

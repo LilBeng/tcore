@@ -53,8 +53,8 @@ class Coin(object):
             bool: True - риск есть (сделку лучше не открывать),
                   False - риска нет (сделка безопасна)
         """
-        ratio_x = self.instrument.risk_parameters.price_limit_ratio_x <= risk_parameters.price_limit_ratio_x
-        ratio_y = self.instrument.risk_parameters.price_limit_ratio_y <= risk_parameters.price_limit_ratio_y
+        ratio_x = self.instrument.risk_parameters.ratio_x <= risk_parameters.ratio_x
+        ratio_y = self.instrument.risk_parameters.ratio_y <= risk_parameters.ratio_y
         return ratio_x and ratio_y
 
     def update_instrument_data(self, instrument: Instrument) -> None:
@@ -97,7 +97,11 @@ class Coin(object):
         Args:
             kline: Новая свеча (цена открытия, закрытия, объем и т.д.)
         """
-        self.klines.append(kline)
+        # Если timestamp последней свечи == timestamp входящей -> обновить
+        if self.klines and self.klines[-1].timestamp == kline.timestamp:
+            self.klines[-1] = kline  # перезаписать
+        else:
+            self.klines.append(kline)
 
     def add_open_interest(self, open_interest: OpenInterest) -> None:
         """
