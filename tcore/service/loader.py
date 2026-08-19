@@ -122,11 +122,6 @@ class HistoryDataLoader(object):
         if not resp:
             return []
 
-        for item in resp['result']['list']:
-            try:
-                Ticker(**item)
-            except:
-                print(item)
         return [Ticker(**item) for item in resp['result']['list']]
 
     async def load_klines(
