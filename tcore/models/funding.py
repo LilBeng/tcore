@@ -14,8 +14,8 @@ class FundingRate(BaseModel):
     timestamp: datetime = Field(alias="fundingRateTimestamp")  # Время ставки
     rate: Decimal = Field(alias="fundingRate")  # Значение ставки
 
-    @classmethod
     @field_validator('timestamp', mode='before')
+    @classmethod
     def parse_timestamp(cls, value) -> datetime:
         """Парсинг timestamp из миллисекунд в datetime"""
         if isinstance(value, str):

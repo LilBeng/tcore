@@ -22,8 +22,8 @@ class TradeHistory(BaseModel):
     is_rpi_trade: bool = Field(alias="isRPITrade")  # Признак RPI трейда
     seq: str  # Последовательность
 
-    @classmethod
     @field_validator('timestamp', mode='before')
+    @classmethod
     def parse_timestamp(cls, value) -> datetime:
         """Парсинг timestamp из миллисекунд в datetime"""
         if isinstance(value, (int, str)):

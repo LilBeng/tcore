@@ -1,17 +1,16 @@
 import logging
 import threading
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Optional
 
 from pybit.unified_trading import WebSocket
 
-from tcore.base.coin import Coin
+from tcore.models.coin import Coin
 from tcore.models.cvd import CVD
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
+from tcore.models.state import PeriodState
 from tcore.models.tick import Ticker
 
 
@@ -30,18 +29,10 @@ class MarketDataStream:
     TradeHistory objects are NOT created.
     CVD is calculated directly from trade messages.
     """
-
-    @dataclass(slots=True)
-    class PeriodState:
-        period_start: datetime
-        cvd_delta: Decimal = Decimal(0)
-        ticker: Optional[Ticker] = None
-        trade_count: int = 0
-
     def __init__(
         self,
         coins: dict[str, Coin],
-        interval: int = 15,
+        interval: int,
         chunk_size: int = 50,
         test_net: bool = False
     ) -> None:
@@ -53,35 +44,27 @@ class MarketDataStream:
         self.ws_connections: list[WebSocket] = []
 
         # State for every symbol.
-        self._states: dict[str, MarketDataStream.PeriodState] = {}
+        self._states: dict[str, PeriodState] = {}
 
         # Separate lock per symbol.
         # One active symbol doesn't block another symbol.
         self._locks: dict[str, threading.Lock] = {symbol: threading.Lock() for symbol in coins}
 
-    # ------------------------------------------------------------------
-    # PERIOD
-    # ------------------------------------------------------------------
-
-    def _get_period_start(self, timestamp: datetime) -> datetime:
-        return timestamp.replace(
+    def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
+        period_start = timestamp.replace(
             minute=timestamp.minute - (timestamp.minute % self.interval),
             second=0,
-            microsecond=0,
+            microsecond=0
         )
-
-    def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
-        period_start = self._get_period_start(timestamp)
-
         state = self._states.get(symbol)
         if state is None:
-            state = self.PeriodState(period_start=period_start)
+            state = PeriodState(period_start=period_start)
             self._states[symbol] = state
 
         if period_start > state.period_start:
             self._persist_period(symbol, state)
 
-            state = self.PeriodState(period_start=period_start)
+            state = PeriodState(period_start=period_start)
             self._states[symbol] = state
 
         return state
@@ -129,7 +112,7 @@ class MarketDataStream:
                 )
             )
 
-        logger.debug(f"[{symbol}] period={state.period_start} trades={state.trade_count} cvd_delta={state.cvd_delta}")
+        logger.debug(f"[{symbol}] period={state.period_start} trades={state.trade_count}")
 
     # TRADE -> CVD
     def handle_trade(self, msg: dict) -> None:

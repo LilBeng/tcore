@@ -6,7 +6,7 @@ from tcore.models.instrument import Instrument, RiskParameters
 
 
 class BaseFilter(ABC):
-    """Базовый класс для описания фильтра"""
+    """Базовый класс"""
     @abstractmethod
     def filter(self, *args) -> Any:
         ...
@@ -16,7 +16,7 @@ class InstrumentFilter(BaseFilter):
     """Фильтр для инструмента"""
     def __init__(
             self,
-            min_risk_parameters: RiskParameters = RiskParameters(ratio_x=Decimal("0.15"), ratio_y=Decimal("0.3"))
+            min_risk_parameters: RiskParameters = RiskParameters(ratio_x=Decimal(0.15), ratio_y=Decimal(0.3))
     ) -> None:
         self.min_risk_parameters = min_risk_parameters
 

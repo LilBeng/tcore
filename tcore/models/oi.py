@@ -15,8 +15,8 @@ class OpenInterest(BaseModel):
     open_interest: Decimal = Field(alias="openInterest")  # Общий открытый интерес
     single_open_interest: Decimal = Field(alias="singleOpenInterest")  # Открытый интерес (В приоритете)
 
-    @classmethod
     @field_validator('timestamp', mode='before')
+    @classmethod
     def parse_timestamp(cls, value) -> datetime:
         """Парсинг timestamp из миллисекунд в datetime"""
         if isinstance(value, str):
