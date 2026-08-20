@@ -1,31 +1,30 @@
-from abc import ABC, abstractmethod
-from decimal import Decimal
-from typing import Any
+from dataclasses import dataclass
 
-from tcore.models.instrument import Instrument, RiskParameters
+from tcore.models.coin import Coin
 
 
-class BaseFilter(ABC):
-    """Базовый класс"""
-    @abstractmethod
-    def filter(self, *args) -> Any:
-        ...
+@dataclass(slots=True)
+class CoinFilter(object):
+    min_ratio_x: float = 0.15
+    min_ratio_y: float = 0.3
+    min_funding_rate: float = 1e-3
+    min_volume_24h: float = 20_000_000
 
+    def check_coin(self, coin: Coin) -> bool:
+        if not coin.instrument.risk_parameters.ratio_x <= self.min_ratio_x:
+            return False
+        if not coin.instrument.risk_parameters.ratio_y <= self.min_ratio_y:
+            return False
+        if not coin.ticker.funding_rate <= self.min_funding_rate:
+            return False
+        if not coin.ticker.volume_24h <= self.min_volume_24h:
+            return False
 
-class InstrumentFilter(BaseFilter):
-    """Фильтр для инструмента"""
-    def __init__(
-            self,
-            min_risk_parameters: RiskParameters = RiskParameters(ratio_x=Decimal(0.15), ratio_y=Decimal(0.3))
-    ) -> None:
-        self.min_risk_parameters = min_risk_parameters
+        return True
 
-    def filter(self, instruments: list[Instrument]) -> list[Instrument]:
-        """Фильтрация данных"""
-        results = []
-        for instrument in instruments:
-            ratio_x = instrument.risk_parameters.ratio_x <= self.min_risk_parameters.ratio_x
-            ratio_y = instrument.risk_parameters.ratio_y <= self.min_risk_parameters.ratio_y
-            if ratio_x and ratio_y:
-                results.append(instrument)
+    def filter(self, coins: dict[str, Coin]) -> dict[str, Coin]:
+        results = {}
+        for name, coin in coins.items():
+            if self.check_coin(coin):
+                results[name] = coin
         return results

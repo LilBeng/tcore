@@ -1,6 +1,6 @@
+import asyncio
 import logging
-import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from pybit.unified_trading import WebSocket
@@ -18,23 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 class MarketDataStream:
-    """
-    High-performance Bybit market data stream.
-
-    Sources:
-        - publicTrade -> CVD
-        - tickers     -> OI + Funding
-        - kline       -> Kline
-
-    TradeHistory objects are NOT created.
-    CVD is calculated directly from trade messages.
-    """
     def __init__(
         self,
         coins: dict[str, Coin],
         interval: int,
         chunk_size: int = 50,
-        test_net: bool = False
+        test_net: bool = False,
     ) -> None:
         self.coins = coins
         self.interval = interval
@@ -46,16 +35,25 @@ class MarketDataStream:
         # State for every symbol.
         self._states: dict[str, PeriodState] = {}
 
-        # Separate lock per symbol.
-        # One active symbol doesn't block another symbol.
-        self._locks: dict[str, threading.Lock] = {symbol: threading.Lock() for symbol in coins}
+        # All websocket callbacks put events into this queue.
+        self._queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
 
+        # Async worker.
+        self._worker_task: asyncio.Task | None = None
+
+        # Event loop used by pybit callbacks.
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+        self._running = False
+
+    # PERIOD STATE
     def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
         period_start = timestamp.replace(
             minute=timestamp.minute - (timestamp.minute % self.interval),
             second=0,
             microsecond=0
         )
+
         state = self._states.get(symbol)
         if state is None:
             state = PeriodState(period_start=period_start)
@@ -72,20 +70,16 @@ class MarketDataStream:
     def _persist_period(self, symbol: str, state: PeriodState) -> None:
         coin = self.coins.get(symbol)
         if coin is None:
-            return
-
-        period_end = state.period_start + timedelta(minutes=self.interval)
+            return None
 
         # CVD
-        if state.cvd_delta:
-            last_cvd = coin.cvds[-1].value if coin.cvds else Decimal(0)
-
+        if state.trade_count >= 0:
             coin.add_cvd(
                 CVD(
                     symbol=symbol,
-                    timestamp=period_end,
-                    value=last_cvd + state.cvd_delta,
-                    delta=state.cvd_delta,
+                    timestamp=state.period_start,
+                    value=coin.cvds[-1].value if coin.cvds else Decimal(0) + state.cvd_delta,
+                    delta=state.cvd_delta
                 )
             )
 
@@ -98,199 +92,224 @@ class MarketDataStream:
             coin.add_open_interest(
                 OpenInterest(
                     symbol=symbol,
-                    timestamp=period_end,
+                    timestamp=state.period_start,
                     open_interest=ticker.open_interest,
-                    single_open_interest=ticker.single_open_interest,
+                    single_open_interest=ticker.single_open_interest
                 )
             )
 
             coin.add_funding_rate(
                 FundingRate(
                     symbol=symbol,
-                    fundingRateTimestamp=period_end,
-                    fundingRate=ticker.funding_rate,
+                    fundingRateTimestamp=state.period_start,
+                    fundingRate=ticker.funding_rate
                 )
             )
 
         logger.debug(f"[{symbol}] period={state.period_start} trades={state.trade_count}")
 
-    # TRADE -> CVD
-    def handle_trade(self, msg: dict) -> None:
-        """
-        Process Bybit publicTrade.
+    # EVENT QUEUE
+    def _enqueue(self, event_type: str, msg: dict) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return None
 
-        We don't create TradeHistory.
-        Only CVD delta is calculated.
-        """
         try:
-            topic = msg.get("topic", "")
-            symbol = topic.removeprefix("publicTrade.")
-            if symbol not in self.coins:
-                return None
+            loop.call_soon_threadsafe(
+                self._queue.put_nowait,
+                (event_type, msg),
+            )
+        except RuntimeError:
+            # Event loop has already been stopped.
+            pass
 
-            data = msg.get("data")
-            if not data:
-                return None
+    async def _worker(self) -> None:
+        logger.info("Market data worker started")
 
-            # Bybit can theoretically send multiple trades
-            # in one websocket message.
-            with self._locks[symbol]:
-                for trade in data:
-                    timestamp = datetime.fromtimestamp(int(trade.get("T")) / 1000, timezone.utc)
-                    state = self._get_or_create_state(symbol, timestamp)
-                    size = Decimal(trade.get("v"))
+        while True:
+            event = await self._queue.get()
 
-                    # Bybit:
-                    # S == Buy  -> positive CVD
-                    # S == Sell -> negative CVD
-                    if trade.get("S") == "Buy":
-                        state.cvd_delta += size
-                    else:
-                        state.cvd_delta -= size
+            try:
+                # None is our shutdown signal.
+                if event is None:
+                    return None
 
-                    state.trade_count += 1
+                event_type, msg = event
 
-        except Exception as exception:
-            logger.exception(f"Trade handler error: {exception}")
+                if event_type == "trade":
+                    self._process_trade(msg)
+
+                elif event_type == "ticker":
+                    self._process_ticker(msg)
+
+                elif event_type == "kline":
+                    self._process_kline(msg)
+
+                else:
+                    logger.warning(f"Unknown market event: {event_type}")
+
+            except Exception as exception:
+                logger.exception(f"Market event processing error: {exception}")
+
+            finally:
+                self._queue.task_done()
+
+    # TRADE
+    def _process_trade(self, msg: dict) -> None:
+        topic = msg.get("topic", "")
+
+        symbol = topic.removeprefix("publicTrade.")
+        if symbol not in self.coins:
+            return None
+
+        data = msg.get("data")
+        if not data:
+            return None
+
+        for trade in data:
+            timestamp = datetime.fromtimestamp(int(trade.get("T")) / 1000, timezone.utc)
+            state = self._get_or_create_state(symbol, timestamp)
+            size = Decimal(trade.get("v"))
+
+            # Bybit:
+            # Buy  -> positive CVD
+            # Sell -> negative CVD
+            if trade.get("S") == "Buy":
+                state.cvd_delta += size
+            else:
+                state.cvd_delta -= size
+
+            state.trade_count += 1
 
     # TICKER
-    def handle_ticker(self, msg: dict) -> None:
-        """
-        Process ticker updates.
+    def _process_ticker(self, msg: dict) -> None:
+        topic = msg.get("topic", "")
 
-        Last ticker received inside the period is used.
-        """
-        try:
-            topic = msg.get("topic", "")
-            symbol = topic.removeprefix("tickers.")
-            if symbol not in self.coins:
-                return None
+        symbol = topic.removeprefix("tickers.")
+        if symbol not in self.coins:
+            return None
 
-            data = msg.get("data")
-            if not data:
-                return None
+        data = msg.get("data")
+        if not data:
+            return None
 
-            timestamp = datetime.fromtimestamp(int(msg.get("ts")) / 1000, timezone.utc)
+        timestamp = datetime.fromtimestamp(int(msg.get("ts")) / 1000, timezone.utc)
 
-            ticker = Ticker(timestamp=timestamp, **data)
+        ticker = Ticker(timestamp=timestamp, **data)
 
-            with self._locks[symbol]:
-                state = self._get_or_create_state(symbol, timestamp)
-                state.ticker = ticker
-
-        except Exception as exception:
-            logger.exception(f"Ticker handler error: {exception}")
+        state = self._get_or_create_state(symbol, timestamp)
+        state.ticker = ticker
 
     # KLINE
+    def _process_kline(self, msg: dict) -> None:
+        topic = msg.get("topic", "")
+
+        parts = topic.split(".")
+        if len(parts) < 3:
+            return None
+
+        symbol = parts[-1]
+
+        coin = self.coins.get(symbol)
+        if coin is None:
+            return None
+
+        data_list = msg.get("data")
+        if not data_list:
+            return None
+
+        data = data_list[0]
+
+        kline = Kline(
+            symbol=symbol,
+            timestamp=datetime.fromtimestamp(int(data.get("start")) / 1000, timezone.utc),
+            open=Decimal(data.get("open")),
+            high=Decimal(data.get("high")),
+            low=Decimal(data.get("low")),
+            close=Decimal(data.get("close")),
+            volume=Decimal(data.get("volume")),
+            turnover=Decimal(data.get("turnover"))
+        )
+
+        if data.get("confirm"):
+            coin.add_kline(kline)
+
+            # ----------------------------------------------------------
+            # В будущем здесь будет отправление сигнала на проверку стратегии
+            # ----------------------------------------------------------
+
+    # BYBIT CALLBACKS
+    def handle_trade(self, msg: dict) -> None:
+        self._enqueue("trade", msg)
+
+    def handle_ticker(self, msg: dict) -> None:
+        self._enqueue("ticker", msg)
+
     def handle_kline(self, msg: dict) -> None:
-        """
-        Process kline updates.
-
-        Unconfirmed candle:
-            replace last candle
-
-        Confirmed candle:
-            add new candle
-        """
-        try:
-            topic = msg.get("topic", "")
-            parts = topic.split(".")
-            if len(parts) < 3:
-                return None
-
-            symbol = parts[-1]
-            coin = self.coins.get(symbol)
-            if coin is None:
-                return None
-
-            data_list = msg.get("data")
-            if not data_list:
-                return None
-
-            data = data_list[0]
-
-            start = datetime.fromtimestamp(int(data.get("start")) / 1000, timezone.utc)
-            end = datetime.fromtimestamp(int(data.get("end")) / 1000, timezone.utc)
-
-            kline = Kline(
-                symbol=symbol,
-                timestamp=start + timedelta(minutes=1),
-                open=Decimal(data.get("open")),
-                high=Decimal(data.get("high")),
-                low=Decimal(data.get("low")),
-                close=Decimal(data.get("close")),
-                volume=Decimal(data.get("volume")),
-                turnover=Decimal(data.get("turnover"))
-            )
-
-            with self._locks[symbol]:
-                if data.get("confirm") or end < datetime.now(timezone.utc):
-                    coin.add_kline(kline)
-
-                elif coin.klines:
-                    last = coin.klines[-1]
-
-                    if last.timestamp == kline.timestamp:
-                        coin.klines[-1] = kline
-                    elif kline.timestamp > last.timestamp:
-                        coin.add_kline(kline)
-
-        except Exception as exception:
-            logger.exception(f"Kline handler error: {exception}")
+        self._enqueue("kline", msg)
 
     # WEBSOCKET
     def _create_connection(self, symbols: list[str]) -> WebSocket:
-        ws = WebSocket(testnet=self.test_net, channel_type="linear")
+        ws = WebSocket(
+            testnet=self.test_net,
+            channel_type="linear",
+        )
 
-        # One subscription request for ALL klines
-        ws.subscribe(f"kline.{self.interval}." + "{symbol}", self.handle_kline, symbols)
-        # One subscription request for ALL trades
+        ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, symbols)
         ws.subscribe("publicTrade.{symbol}", self.handle_trade, symbols)
-        # One subscription request for ALL tickers
         ws.subscribe("tickers.{symbol}", self.handle_ticker, symbols)
 
         return ws
 
-    def start(self) -> None:
-        """
-        Start websocket streams.
+    # START
+    async def start(self) -> None:
+        if self._running:
+            logger.warning("Market data stream already running")
+            return None
 
-        Symbols are split between several WebSocket connections.
-        """
         symbols = list(self.coins)
         if not symbols:
             logger.warning("No symbols to subscribe")
             return None
 
+        self._loop = asyncio.get_running_loop()
+        self._running = True
+
         logger.info(
-            f"Starting market stream: {len(symbols)} symbols, "
-            f"interval={self.interval}m, chunk={self.chunk_size}"
+            f"Starting market stream: "
+            f"{len(symbols)} symbols, "
+            f"interval={self.interval}m, "
+            f"chunk={self.chunk_size}"
         )
 
-        for start in range(0, len(symbols), self.chunk_size,):
+        # Start worker BEFORE websocket connections.
+        self._worker_task = asyncio.create_task(
+            self._worker(),
+            name="market-data-worker"
+        )
+
+        # Create websocket connections.
+        for start in range(0, len(symbols), self.chunk_size):
             chunk = symbols[start:start + self.chunk_size]
 
             ws = self._create_connection(chunk)
+
             self.ws_connections.append(ws)
 
             logger.info(f"WebSocket #{len(self.ws_connections)}: {len(chunk)} symbols")
 
         logger.info(f"Market stream started: {len(self.ws_connections)} WebSockets")
 
-    def stop(self) -> None:
-        """
-        Close websocket connections.
-        """
-        for symbol, lock in self._locks.items():
-            with lock:
-                state = self._states.pop(symbol, None)
-                if state is None:
-                    continue
-                if state.cvd_delta or state.ticker is not None or state.trade_count:
-                    self._persist_period(symbol, state)
+    # STOP
+    async def stop(self) -> None:
+        if not self._running:
+            return None
 
-                    logger.info(f"[{symbol}] Final period closed: {state.trade_count} trades")
+        logger.info("Stopping market data stream...")
 
+        self._running = False
+
+        # Stop accepting new websocket events first.
         for ws in self.ws_connections:
             try:
                 ws.exit()
@@ -298,5 +317,25 @@ class MarketDataStream:
                 logger.exception(f"Error closing WebSocket: {exception}")
 
         self.ws_connections.clear()
+
+        # Wait until all queued events are processed.
+        await self._queue.join()
+
+        # Stop worker.
+        if self._worker_task is not None:
+            await self._queue.put(None)
+            await self._worker_task
+            self._worker_task = None
+
+        # Persist final periods.
+        for symbol in list(self._states):
+            state = self._states.pop(symbol)
+
+            if state.cvd_delta or state.ticker is not None or state.trade_count:
+                self._persist_period(symbol, state)
+
+                logger.info(f"[{symbol}] Final period closed: {state.trade_count} trades")
+
+        self._loop = None
 
         logger.info("Market data stream stopped")
