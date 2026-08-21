@@ -44,13 +44,13 @@ class MarketDataStream:
         self._states: dict[str, PeriodState] = {}
 
         # All websocket callbacks put events into this queue.
-        self._queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[Optional[tuple[str, dict]]] = asyncio.Queue()
 
         # Async worker.
-        self._worker_task: asyncio.Task | None = None
+        self._worker_task: Optional[asyncio.Task] = None
 
         # Event loop used by pybit callbacks.
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         self._running = False
 
