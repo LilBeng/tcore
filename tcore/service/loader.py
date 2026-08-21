@@ -20,14 +20,11 @@ logger = logging.getLogger(__name__)
 
 @singleton
 class HistoryDataLoader(object):
-    """Асинхронный загрузчик исторических данных с ByBit"""
-
     def __init__(self, session: HTTP) -> None:
         self.session = session
 
     @staticmethod
     async def _fetch_with_retry(fetch_func, error_msg: str, max_retries: int = 3) -> dict:
-        """Универсальный метод запроса с повторными попытками"""
         for attempt in range(max_retries + 1):
             try:
                 resp = await asyncio.to_thread(fetch_func)
@@ -57,9 +54,6 @@ class HistoryDataLoader(object):
             status: InstrumentStatus = InstrumentStatus.TRADING,
             max_retries: int = 3
     ) -> list[Instrument]:
-        """
-        Загрузка инструментов с курсорной пагинацией.
-        """
         instruments = []
         cursor = None
 
@@ -106,9 +100,6 @@ class HistoryDataLoader(object):
             symbol: Optional[str] = None,
             max_retries: int = 3
     ) -> list[Ticker]:
-        """
-        Загрузка тиков (рыночных данных) [Обновление каждые 24 часа].
-        """
         params = {"category": category.value}
         if symbol:
             params["symbol"] = symbol
@@ -132,10 +123,6 @@ class HistoryDataLoader(object):
             category: Category = Category.LINEAR,
             max_retries: int = 3
     ) -> list[Kline]:
-        """
-        Асинхронная загрузка исторических свечей.
-        Пагинация через параметр end (timestamp самой старой свечи).
-        """
         all_klines = []
         end = int(time.time() * 1000)
 
@@ -192,25 +179,10 @@ class HistoryDataLoader(object):
             category: Category = Category.LINEAR,
             max_retries: int = 3
     ) -> list[OpenInterest]:
-        """
-        Асинхронная загрузка истории открытого интереса.
-        Пагинация через cursor.
-
-        Args:
-            symbol: Торговый символ
-            interval: Интервал данных
-            limit: Количество записей
-            category: Категория
-            max_retries: Максимальное количество повторных попыток
-
-        Returns:
-            Список записей открытого интереса, отсортированный от старых к новым
-        """
         all_items = []
         cursor = None
 
         async def fetch_page(page_cursor: Optional[str], _page_limit: int) -> dict:
-            """Загрузка одной страницы"""
             params = {
                 "category": category.value,
                 "symbol": symbol,
@@ -265,18 +237,6 @@ class HistoryDataLoader(object):
             category: Category = Category.LINEAR,
             max_retries: int = 3
     ) -> list[FundingRate]:
-        """
-        Загрузка истории ставок финансирования.
-
-        Args:
-            symbol: Торговый символ
-            limit: Количество записей (макс. 200)
-            category: Категория
-            max_retries: Максимальное количество повторных попыток
-
-        Returns:
-            Список ставок финансирования от старых к новым
-        """
         params = {
             "category": category.value,
             "symbol": symbol,
@@ -306,18 +266,6 @@ class HistoryDataLoader(object):
             category: Category = Category.LINEAR,
             max_retries: int = 3
     ) -> list[TradeHistory]:
-        """
-        Загрузка истории сделок.
-
-        Args:
-            symbol: Торговый символ
-            limit: Количество сделок (макс. 1000)
-            category: Категория
-            max_retries: Максимальное количество повторных попыток
-
-        Returns:
-            Список сделок, отсортированный от старых к новым
-        """
         params = {
             "category": category.value,
             "symbol": symbol,

@@ -6,7 +6,6 @@ from tcore.models.enums import InstrumentStatus
 
 
 class LeverageFilter(BaseModel):
-    """Фильтр по кредитному плечу"""
     model_config = ConfigDict(populate_by_name=True)
 
     min_leverage: Decimal = Field(alias="minLeverage")
@@ -15,7 +14,6 @@ class LeverageFilter(BaseModel):
 
 
 class LotSizeFilter(BaseModel):
-    """Фильтр размера лота"""
     model_config = ConfigDict(populate_by_name=True)
 
     min_qty: Decimal = Field(alias="minOrderQty")
@@ -24,7 +22,6 @@ class LotSizeFilter(BaseModel):
 
 
 class PriceFilter(BaseModel):
-    """Фильтр цены"""
     model_config = ConfigDict(populate_by_name=True)
 
     min_price: Decimal = Field(alias="minPrice")
@@ -33,7 +30,6 @@ class PriceFilter(BaseModel):
 
 
 class RiskParameters(BaseModel):
-    """Параметры риска инструмента"""
     model_config = ConfigDict(populate_by_name=True)
 
     ratio_x: Decimal = Field(alias="priceLimitRatioX")  # <0.15 норма
@@ -41,12 +37,6 @@ class RiskParameters(BaseModel):
 
 
 class Instrument(BaseModel):
-    """
-    Инструмент (торговая пара) на Bybit.
-
-    Содержит всю информацию о торговой паре: статус, фильтры,
-    параметры риска и лимиты ставки финансирования.
-    """
     model_config = ConfigDict(
         populate_by_name=True,
         str_strip_whitespace=True,

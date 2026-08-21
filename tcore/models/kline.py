@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Kline(BaseModel):
-    """Свеча с биржи Bybit"""
     model_config = ConfigDict(populate_by_name=True)
 
     symbol: str  # Торговый символ
@@ -19,16 +18,6 @@ class Kline(BaseModel):
 
     @classmethod
     def from_api_list(cls, symbol: str, data: list) -> "Kline":
-        """
-        Создание свечи из списка данных API.
-
-        Args:
-            data: Список [timestamp_ms, open, high, low, close, volume, turnover]
-            symbol: Торговый символ
-
-        Returns:
-            Объект Kline
-        """
         return cls(
             symbol=symbol,
             timestamp=datetime.fromtimestamp(int(data[0]) / 1000, tz=timezone.utc),

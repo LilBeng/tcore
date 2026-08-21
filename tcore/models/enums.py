@@ -10,7 +10,6 @@ class InstrumentStatus(str, Enum):
 
 
 class Category(str, Enum):
-    """Тип рынка"""
     SPOT = "spot"
     LINEAR = "linear"
     INVERSE = "inverse"
@@ -18,7 +17,6 @@ class Category(str, Enum):
 
 
 class KlineInterval(str, Enum):
-    """Интервалы свечей"""
     M1 = "1"      # 1 минута
     M3 = "3"      # 3 минуты
     M5 = "5"      # 5 минут
@@ -35,7 +33,6 @@ class KlineInterval(str, Enum):
 
 
 class OIInterval(str, Enum):
-    """Интервалы для открытого интереса"""
     M5 = "5min"    # 5 минут
     M15 = "15min"  # 15 минут
     M30 = "30min"  # 30 минут
@@ -45,8 +42,5 @@ class OIInterval(str, Enum):
 
 
 class OrderSide(str, Enum):
-    """
-    Сторона ордера
-    """
     BUY = "Buy"  # Мейкер купил (Тейкер продал)
     SELL = "Sell"  # Мейкер продал (Тейкер купил)

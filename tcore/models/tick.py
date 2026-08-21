@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Ticker(BaseModel):
-    """Тик (рыночные данные) инструмента"""
     model_config = ConfigDict(populate_by_name=True)
 
     timestamp: datetime = Field(default_factory=datetime.now)

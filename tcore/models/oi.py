@@ -5,9 +5,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class OpenInterest(BaseModel):
-    """
-    Открытый интерес по инструменту.
-    """
     model_config = ConfigDict(populate_by_name=True)
 
     symbol: str = Field(alias="symbol")  # Торговый символ
@@ -18,7 +15,6 @@ class OpenInterest(BaseModel):
     @field_validator('timestamp', mode='before')
     @classmethod
     def parse_timestamp(cls, value) -> datetime:
-        """Парсинг timestamp из миллисекунд в datetime"""
         if isinstance(value, str):
             return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
         return value

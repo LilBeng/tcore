@@ -1,9 +1,11 @@
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Optional
 
-from pybit.unified_trading import WebSocket
+from pybit.unified_trading import WebSocket, HTTP
 
 from tcore.models.coin import Coin
 from tcore.models.cvd import CVD
@@ -12,7 +14,8 @@ from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
 from tcore.models.state import PeriodState
 from tcore.models.tick import Ticker
-
+from tcore.service.loader import HistoryDataLoader
+from tcore.utils.filters import CoinFilter
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +23,22 @@ logger = logging.getLogger(__name__)
 class MarketDataStream:
     def __init__(
         self,
-        coins: dict[str, Coin],
         interval: int,
+        coin_filter: CoinFilter,
         chunk_size: int = 50,
-        test_net: bool = False,
+        max_len: int = 100_000,
+        test_net: bool = False
     ) -> None:
-        self.coins = coins
+        assert chunk_size <= 50
+
+        self.coins: dict[str, Coin] = {}
         self.interval = interval
+        self.coin_filter = coin_filter
         self.chunk_size = chunk_size
+        self.max_len = max_len
         self.test_net = test_net
 
-        self.ws_connections: list[WebSocket] = []
+        self.ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
 
         # State for every symbol.
         self._states: dict[str, PeriodState] = {}
@@ -252,7 +260,7 @@ class MarketDataStream:
     def _create_connection(self, symbols: list[str]) -> WebSocket:
         ws = WebSocket(
             testnet=self.test_net,
-            channel_type="linear",
+            channel_type="linear"
         )
 
         ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, symbols)
@@ -261,11 +269,74 @@ class MarketDataStream:
 
         return ws
 
+    def add_symbol(self, symbol: str) -> None:
+        if any(symbol in symbols for symbols in self.ws_connections.values()):
+            return None
+
+        for ws, symbols in self.ws_connections.items():
+            if len(symbols) < self.chunk_size:
+                ws.subscribe("tickers.{symbol}", self.handle_ticker, [symbol])
+                ws.subscribe("publicTrade.{symbol}", self.handle_trade, [symbol])
+                ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, [symbol])
+
+                symbols.add(symbol)
+
+                logger.info(f"Symbol added: {symbol}, socket_symbols={len(symbols)}")
+
+                return None
+
+            ws = self._create_connection([symbol])
+            self.ws_connections[ws] = set(symbol)
+
+            logger.info(f"New WebSocket created for {symbol}")
+
+    def remove_symbol(self, symbol: str) -> None:
+        for ws, symbols in self.ws_connections.items():
+            if symbol not in symbols:
+                continue
+
+            ws.unsubscribe(f"tickers.{symbol}")
+            ws.unsubscribe(f"publicTrade.{symbol}")
+            ws.unsubscribe(f"kline.{self.interval}.{symbol}")
+
+            symbols.remove(symbol)
+
+            logger.info(f"Symbol removed: {symbol}, socket_symbols={len(symbols)}")
+
+            if not symbols:
+                ws.exit()
+
+                del self.ws_connections[ws]
+
+                logger.info("Empty WebSocket closed")
+
     # START
-    async def start(self) -> None:
+    async def start(self, coins: Optional[dict[str, Coin]] = None) -> None:
         if self._running:
             logger.warning("Market data stream already running")
             return None
+
+        if coins:
+            self.coins = coins
+        else:
+            session = HTTP(
+                testnet=self.test_net
+            )
+
+            loader = HistoryDataLoader(session)
+
+            instruments = {instrument.symbol: instrument for instrument in await loader.load_instruments()}
+            tickers = {ticker.symbol: ticker for ticker in await loader.load_tickers()}
+
+            for key, instrument in instruments.items():
+                ticker = tickers.get(key)
+                if ticker:
+                    coin = Coin(instrument, ticker)
+                    coin.set_max_len(self.max_len)
+
+                    self.coins[instrument.symbol] = coin
+                else:
+                    logger.warning(f"No ticker (symbol={key}) to subscribe")
 
         symbols = list(self.coins)
         if not symbols:
@@ -294,7 +365,7 @@ class MarketDataStream:
 
             ws = self._create_connection(chunk)
 
-            self.ws_connections.append(ws)
+            self.ws_connections[ws] = set(chunk)
 
             logger.info(f"WebSocket #{len(self.ws_connections)}: {len(chunk)} symbols")
 

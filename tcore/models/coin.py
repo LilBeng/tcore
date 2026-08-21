@@ -1,4 +1,5 @@
 from collections import deque
+from dataclasses import field, dataclass
 from typing import Union
 
 from tcore.models.cvd import CVD
@@ -9,23 +10,20 @@ from tcore.models.oi import OpenInterest
 from tcore.models.tick import Ticker
 
 
-class Coin(object):
-    def __init__(
-            self,
-            instrument: Instrument,
-            ticker: Ticker,
-            klines: list[Kline],
-            open_interests: list[OpenInterest],
-            funding_rates: list[FundingRate],
-            cvds: list[CVD],
-            max_len: int = 100_000
-    ) -> None:
-        self.instrument = instrument
-        self.ticker = ticker
-        self.klines = deque(klines, max_len)
-        self.open_interests = deque(open_interests, max_len)
-        self.funding_rates = deque(funding_rates, max_len)
-        self.cvds = deque(cvds, max_len)
+@dataclass(slots=True)
+class Coin:
+    instrument: Instrument
+    ticker: Ticker
+    klines: deque[Kline] = field(default_factory=deque)
+    open_interests: deque[OpenInterest] = field(default_factory=deque)
+    funding_rates: deque[FundingRate] = field(default_factory=deque)
+    cvds: deque[CVD] = field(default_factory=deque)
+
+    def set_max_len(self, max_len: int) -> None:
+        self.klines = deque(self.klines, maxlen=max_len)
+        self.open_interests = deque(self.open_interests, maxlen=max_len)
+        self.funding_rates = deque(self.funding_rates, maxlen=max_len)
+        self.cvds = deque(self.cvds, maxlen=max_len)
 
     @staticmethod
     def _add(queue: deque, obj: Union[Ticker, Kline, FundingRate, OpenInterest, CVD]) -> None:

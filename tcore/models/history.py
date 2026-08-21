@@ -7,9 +7,6 @@ from tcore.models.enums import OrderSide
 
 
 class TradeHistory(BaseModel):
-    """
-    История сделки.
-    """
     model_config = ConfigDict(populate_by_name=True)
 
     symbol: str  # Торговый символ
@@ -25,22 +22,18 @@ class TradeHistory(BaseModel):
     @field_validator('timestamp', mode='before')
     @classmethod
     def parse_timestamp(cls, value) -> datetime:
-        """Парсинг timestamp из миллисекунд в datetime"""
         if isinstance(value, (int, str)):
             return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
         return value
 
     @property
     def is_buy(self) -> bool:
-        """Проверка, что сделка на покупку"""
         return self.side == OrderSide.BUY
 
     @property
     def is_sell(self) -> bool:
-        """Проверка, что сделка на продажу"""
         return self.side == OrderSide.SELL
 
     @property
     def volume_usdt(self) -> Decimal:
-        """Объём сделки в USDT"""
         return self.price * self.size
