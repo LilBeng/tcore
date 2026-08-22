@@ -9,6 +9,7 @@ from pybit.unified_trading import WebSocket, HTTP
 
 from tcore.models.coin import Coin
 from tcore.models.cvd import CVD
+from tcore.models.enums import MarketInterval
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
@@ -23,8 +24,8 @@ logger = logging.getLogger(__name__)
 class MarketDataStream:
     def __init__(
         self,
-        interval: int,
         coin_filter: CoinFilter,
+        interval: MarketInterval = MarketInterval.M1,
         chunk_size: int = 50,
         max_len: int = 100_000,
         update_time: timedelta = timedelta(hours=1),
@@ -189,6 +190,8 @@ class MarketDataStream:
         return coins
 
     async def _instruments_updater(self) -> None:
+        logger.info("Instruments updater worker started")
+
         while self._running:
             try:
                 logger.info(f"Next update instruments in {self.update_time.seconds}s")
@@ -326,7 +329,7 @@ class MarketDataStream:
             channel_type="linear"
         )
 
-        ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, symbols)
+        ws.subscribe(f"kline.{self.interval.value}.{{symbol}}", self.handle_kline, symbols)
         ws.subscribe("publicTrade.{symbol}", self.handle_trade, symbols)
         ws.subscribe("tickers.{symbol}", self.handle_ticker, symbols)
 
@@ -342,7 +345,7 @@ class MarketDataStream:
 
             ws.subscribe("tickers.{symbol}", self.handle_ticker, [symbol])
             ws.subscribe("publicTrade.{symbol}", self.handle_trade, [symbol])
-            ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, [symbol],)
+            ws.subscribe(f"kline.{self.interval.value}.{{symbol}}", self.handle_kline, [symbol],)
 
             symbols.add(symbol)
 
@@ -364,7 +367,7 @@ class MarketDataStream:
 
         ws.unsubscribe(f"tickers.{symbol}")
         ws.unsubscribe(f"publicTrade.{symbol}")
-        ws.unsubscribe(f"kline.{self.interval}.{symbol}")
+        ws.unsubscribe(f"kline.{self.interval.value}.{symbol}")
 
         symbols.remove(symbol)
 
@@ -398,7 +401,7 @@ class MarketDataStream:
         logger.info(
             f"Starting market stream: "
             f"{len(symbols)} symbols, "
-            f"interval={self.interval}m, "
+            f"interval={self.interval.value}m, "
             f"chunk={self.chunk_size}"
         )
 

@@ -44,3 +44,16 @@ class OIInterval(str, Enum):
 class OrderSide(str, Enum):
     BUY = "Buy"  # Мейкер купил (Тейкер продал)
     SELL = "Sell"  # Мейкер продал (Тейкер купил)
+
+
+class MarketInterval(int, Enum):
+    M1 = 1  # 1 минута
+    M3 = 3  # 3 минуты
+    M5 = 5  # 5 минут
+    M15 = 15  # 15 минут
+    M30 = 30  # 30 минут
+    H1 = 60  # 1 час
+    H2 = 120  # 2 часа
+    H4 = 240  # 4 часа
+    H6 = 360  # 6 часов
+    H12 = 720  # 12 часов
