@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -27,6 +27,7 @@ class MarketDataStream:
         coin_filter: CoinFilter,
         chunk_size: int = 50,
         max_len: int = 100_000,
+        update_time: timedelta = timedelta(hours=1),
         test_net: bool = False
     ) -> None:
         assert chunk_size <= 50
@@ -36,6 +37,7 @@ class MarketDataStream:
         self.coin_filter = coin_filter
         self.chunk_size = chunk_size
         self.max_len = max_len
+        self.update_time = update_time
         self.test_net = test_net
 
         self._session = HTTP(testnet=self.test_net)
@@ -189,7 +191,9 @@ class MarketDataStream:
     async def _instruments_updater(self) -> None:
         while self._running:
             try:
-                await asyncio.sleep(3600)
+                logger.info(f"Next update instruments in {self.update_time.seconds}s")
+                await asyncio.sleep(self.update_time.seconds)
+
                 logger.info(f"Update instruments ...")
                 await self._update_instruments()
             except asyncio.CancelledError:
@@ -218,6 +222,8 @@ class MarketDataStream:
             del self.coins[symbol]
 
             logger.info(f"Instrument removed: {symbol}")
+
+        logger.info(f"All instruments updated")
 
     # TRADE
     def _process_trade(self, msg: dict) -> None:
