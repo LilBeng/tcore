@@ -38,6 +38,9 @@ class MarketDataStream:
         self.max_len = max_len
         self.test_net = test_net
 
+        self._session = HTTP(testnet=self.test_net)
+        self._loader = HistoryDataLoader(self._session)
+
         self.ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
 
         # State for every symbol.
@@ -48,6 +51,7 @@ class MarketDataStream:
 
         # Async worker.
         self._worker_task: Optional[asyncio.Task] = None
+        self._instruments_task: Optional[asyncio.Task] = None
 
         # Event loop used by pybit callbacks.
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -162,6 +166,59 @@ class MarketDataStream:
             finally:
                 self._queue.task_done()
 
+    async def _get_coins(self) -> dict[str, Coin]:
+        coins = {}
+
+        instruments = {instrument.symbol: instrument for instrument in await self._loader.load_instruments()}
+        tickers = {ticker.symbol: ticker for ticker in await self._loader.load_tickers()}
+
+        for key, instrument in instruments.items():
+            ticker = tickers.get(key)
+            if ticker:
+                coin = Coin(instrument, ticker)
+                coin.set_max_len(self.max_len)
+
+                # Фильтрация монет
+                if self.coin_filter.check_coin(coin):
+                    coins[instrument.symbol] = coin
+            else:
+                logger.warning(f"No ticker (symbol={key}) to subscribe")
+
+        return coins
+
+    async def _instruments_updater(self) -> None:
+        while self._running:
+            try:
+                await asyncio.sleep(3600)
+                logger.info(f"Update instruments ...")
+                await self._update_instruments()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exception:
+                logger.exception(f"Failed to update instruments: {exception}")
+
+    async def _update_instruments(self) -> None:
+        coins = await self._get_coins()
+
+        logger.info(f"Filtered instruments: {len(coins)}")
+
+        current_symbols = set(self.coins.keys())
+        actual_symbols = set(coins.keys())
+
+        # Появились после фильтрации
+        for symbol in actual_symbols - current_symbols:
+            self.coins[symbol] = coins[symbol]
+            self.add_symbol(symbol)
+
+            logger.info(f"New instrument added: {symbol}")
+
+        # Перестали проходить фильтрацию
+        for symbol in current_symbols - actual_symbols:
+            self.remove_symbol(symbol)
+            del self.coins[symbol]
+
+            logger.info(f"Instrument removed: {symbol}")
+
     # TRADE
     def _process_trade(self, msg: dict) -> None:
         topic = msg.get("topic", "")
@@ -274,69 +331,55 @@ class MarketDataStream:
             return None
 
         for ws, symbols in self.ws_connections.items():
-            if len(symbols) < self.chunk_size:
-                ws.subscribe("tickers.{symbol}", self.handle_ticker, [symbol])
-                ws.subscribe("publicTrade.{symbol}", self.handle_trade, [symbol])
-                ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, [symbol])
-
-                symbols.add(symbol)
-
-                logger.info(f"Symbol added: {symbol}, socket_symbols={len(symbols)}")
-
-                return None
-
-            ws = self._create_connection([symbol])
-            self.ws_connections[ws] = set(symbol)
-
-            logger.info(f"New WebSocket created for {symbol}")
-
-    def remove_symbol(self, symbol: str) -> None:
-        for ws, symbols in self.ws_connections.items():
-            if symbol not in symbols:
+            if len(symbols) >= self.chunk_size:
                 continue
 
-            ws.unsubscribe(f"tickers.{symbol}")
-            ws.unsubscribe(f"publicTrade.{symbol}")
-            ws.unsubscribe(f"kline.{self.interval}.{symbol}")
+            ws.subscribe("tickers.{symbol}", self.handle_ticker, [symbol])
+            ws.subscribe("publicTrade.{symbol}", self.handle_trade, [symbol])
+            ws.subscribe(f"kline.{self.interval}.{{symbol}}", self.handle_kline, [symbol],)
 
-            symbols.remove(symbol)
+            symbols.add(symbol)
 
-            logger.info(f"Symbol removed: {symbol}, socket_symbols={len(symbols)}")
+            logger.info(f"Symbol added: {symbol}, socket_symbols={len(symbols)}")
+            return None
 
-            if not symbols:
-                ws.exit()
+        # Все существующие сокеты заполнены
+        ws = self._create_connection([symbol])
+        self.ws_connections[ws] = {symbol}
 
-                del self.ws_connections[ws]
+        logger.info(f"New WebSocket created for {symbol}")
 
-                logger.info("Empty WebSocket closed")
+    def remove_symbol(self, symbol: str) -> None:
+        ws = next((ws for ws, symbols in self.ws_connections.items() if symbol in symbols), None)
+        if ws is None:
+            return None
+
+        symbols = self.ws_connections.get(ws)
+
+        ws.unsubscribe(f"tickers.{symbol}")
+        ws.unsubscribe(f"publicTrade.{symbol}")
+        ws.unsubscribe(f"kline.{self.interval}.{symbol}")
+
+        symbols.remove(symbol)
+
+        logger.info(f"Symbol removed: {symbol}, socket_symbols={len(symbols)}")
+
+        if not symbols:
+            ws.exit()
+            del self.ws_connections[ws]
+
+            logger.info("Empty WebSocket closed")
 
     # START
-    async def start(self, coins: Optional[dict[str, Coin]] = None) -> None:
+    async def start(self, coins: Optional[dict[str, Coin]] = None, auto_update: bool = True) -> None:
         if self._running:
             logger.warning("Market data stream already running")
             return None
 
         if coins:
-            self.coins = coins
+            self.coins = self.coin_filter.filter(coins)
         else:
-            session = HTTP(
-                testnet=self.test_net
-            )
-
-            loader = HistoryDataLoader(session)
-
-            instruments = {instrument.symbol: instrument for instrument in await loader.load_instruments()}
-            tickers = {ticker.symbol: ticker for ticker in await loader.load_tickers()}
-
-            for key, instrument in instruments.items():
-                ticker = tickers.get(key)
-                if ticker:
-                    coin = Coin(instrument, ticker)
-                    coin.set_max_len(self.max_len)
-
-                    self.coins[instrument.symbol] = coin
-                else:
-                    logger.warning(f"No ticker (symbol={key}) to subscribe")
+            self.coins = await self._get_coins()
 
         symbols = list(self.coins)
         if not symbols:
@@ -354,10 +397,10 @@ class MarketDataStream:
         )
 
         # Start worker BEFORE websocket connections.
-        self._worker_task = asyncio.create_task(
-            self._worker(),
-            name="market-data-worker"
-        )
+        self._worker_task = asyncio.create_task(self._worker(), name="market-data-worker")
+
+        if auto_update:
+            self._instruments_task = asyncio.create_task(self._instruments_updater(), name="instruments-updater")
 
         # Create websocket connections.
         for start in range(0, len(symbols), self.chunk_size):
@@ -397,6 +440,16 @@ class MarketDataStream:
             await self._queue.put(None)
             await self._worker_task
             self._worker_task = None
+
+        if self._instruments_task:
+            self._instruments_task.cancel()
+
+            try:
+                await self._instruments_task
+            except asyncio.CancelledError:
+                pass
+
+            self._instruments_task = None
 
         # Persist final periods.
         for symbol in list(self._states):
