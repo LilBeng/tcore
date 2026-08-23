@@ -13,12 +13,10 @@ from tcore.models.instrument import Instrument
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
 from tcore.models.tick import Ticker
-from tcore.utils.decorators import singleton
 
 logger = logging.getLogger(__name__)
 
 
-@singleton
 class HistoryDataLoader(object):
     def __init__(self, session: HTTP) -> None:
         self.session = session

@@ -44,7 +44,7 @@ class MarketDataStream:
         self._session = HTTP(testnet=self.test_net)
         self._loader = HistoryDataLoader(self._session)
 
-        self.ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
+        self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
 
         # State for every symbol.
         self._states: dict[str, PeriodState] = {}
@@ -332,10 +332,10 @@ class MarketDataStream:
         return ws
 
     def add_symbol(self, symbol: str) -> None:
-        if any(symbol in symbols for symbols in self.ws_connections.values()):
+        if any(symbol in symbols for symbols in self._ws_connections.values()):
             return None
 
-        for ws, symbols in self.ws_connections.items():
+        for ws, symbols in self._ws_connections.items():
             if len(symbols) >= self.chunk_size:
                 continue
 
@@ -350,16 +350,16 @@ class MarketDataStream:
 
         # Все существующие сокеты заполнены
         ws = self._create_connection([symbol])
-        self.ws_connections[ws] = {symbol}
+        self._ws_connections[ws] = {symbol}
 
         logger.info(f"New WebSocket created for {symbol}")
 
     def remove_symbol(self, symbol: str) -> None:
-        ws = next((ws for ws, symbols in self.ws_connections.items() if symbol in symbols), None)
+        ws = next((ws for ws, symbols in self._ws_connections.items() if symbol in symbols), None)
         if ws is None:
             return None
 
-        symbols = self.ws_connections.get(ws)
+        symbols = self._ws_connections.get(ws)
 
         ws.unsubscribe(f"tickers.{symbol}")
         ws.unsubscribe(f"publicTrade.{symbol}")
@@ -371,7 +371,7 @@ class MarketDataStream:
 
         if not symbols:
             ws.exit()
-            del self.ws_connections[ws]
+            del self._ws_connections[ws]
 
             logger.info("Empty WebSocket closed")
 
@@ -413,11 +413,11 @@ class MarketDataStream:
 
             ws = self._create_connection(chunk)
 
-            self.ws_connections[ws] = set(chunk)
+            self._ws_connections[ws] = set(chunk)
 
-            logger.info(f"WebSocket #{len(self.ws_connections)}: {len(chunk)} symbols")
+            logger.info(f"WebSocket #{len(self._ws_connections)}: {len(chunk)} symbols")
 
-        logger.info(f"Market stream started: {len(self.ws_connections)} WebSockets")
+        logger.info(f"Market stream started: {len(self._ws_connections)} WebSockets")
 
     # STOP
     async def stop(self) -> None:
@@ -429,13 +429,13 @@ class MarketDataStream:
         self._running = False
 
         # Stop accepting new websocket events first.
-        for ws in self.ws_connections:
+        for ws in self._ws_connections:
             try:
                 ws.exit()
             except Exception as exception:
                 logger.exception(f"Error closing WebSocket: {exception}")
 
-        self.ws_connections.clear()
+        self._ws_connections.clear()
 
         # Wait until all queued events are processed.
         await self._queue.join()
