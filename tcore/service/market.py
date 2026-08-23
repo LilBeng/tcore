@@ -91,7 +91,6 @@ class MarketDataStream:
         if state.trade_count >= 0:
             coin.add_cvd(
                 CVD(
-                    symbol=symbol,
                     timestamp=state.period_start,
                     value=coin.cvds[-1].value if coin.cvds else Decimal(0) + state.cvd_delta,
                     delta=state.cvd_delta
@@ -106,7 +105,6 @@ class MarketDataStream:
 
             coin.add_open_interest(
                 OpenInterest(
-                    symbol=symbol,
                     timestamp=state.period_start,
                     open_interest=ticker.open_interest,
                     single_open_interest=ticker.single_open_interest
@@ -115,9 +113,8 @@ class MarketDataStream:
 
             coin.add_funding_rate(
                 FundingRate(
-                    symbol=symbol,
-                    fundingRateTimestamp=state.period_start,
-                    fundingRate=ticker.funding_rate
+                    timestamp=state.period_start,
+                    rate=ticker.funding_rate
                 )
             )
 
@@ -295,7 +292,6 @@ class MarketDataStream:
         data = data_list[0]
 
         kline = Kline(
-            symbol=symbol,
             timestamp=datetime.fromtimestamp(int(data.get("start")) / 1000, timezone.utc),
             open=Decimal(data.get("open")),
             high=Decimal(data.get("high")),

@@ -169,7 +169,7 @@ class HistoryDataLoader(object):
         # Обрезаем до лимита (если вдруг загрузили больше)
         all_klines = all_klines[-limit:]
 
-        return [Kline.from_api_list(symbol, k) for k in all_klines]
+        return [Kline.from_api(k) for k in all_klines]
 
     async def load_open_interest(
             self,
@@ -225,7 +225,7 @@ class HistoryDataLoader(object):
         # Берём последние limit записей и разворачиваем (старые → новые)
         selected_items = all_items[-limit:] if len(all_items) > limit else all_items
 
-        result = [OpenInterest(symbol=symbol, **item) for item in reversed(selected_items)]
+        result = [OpenInterest.from_api(item) for item in reversed(selected_items)]
 
         logger.info(f"Loaded {len(result)} OI records for {symbol}")
         return result
@@ -254,7 +254,7 @@ class HistoryDataLoader(object):
 
         # API возвращает от новых к старым, разворачиваем
         items = resp['result']['list']
-        result = [FundingRate(**item) for item in reversed(items)]
+        result = [FundingRate.from_api(item) for item in reversed(items)]
 
         logger.info(f"Loaded {len(result)} funding rates for {symbol}")
         return result
@@ -286,7 +286,7 @@ class HistoryDataLoader(object):
         # Сортировка от старых к новым
         sorted_items = sorted(items, key=lambda x: int(x.get('time', 0)))
 
-        result = [TradeHistory(**item) for item in sorted_items]
+        result = [TradeHistory.from_api(item) for item in sorted_items]
 
         logger.info(f"Loaded {len(result)} trades for {symbol}")
         return result

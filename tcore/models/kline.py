@@ -1,26 +1,22 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
 
-
-class Kline(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    symbol: str  # Торговый символ
-    timestamp: datetime  # Время открытия свечи
-    open: Decimal  # Цена открытия
-    high: Decimal  # Максимальная цена
-    low: Decimal  # Минимальная цена
-    close: Decimal  # Цена закрытия
-    volume: Decimal  # Объём торгов в базовой монете
-    turnover: Decimal  # Оборот в котируемой монете
+@dataclass(slots=True)
+class Kline:
+    timestamp: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+    turnover: Decimal
 
     @classmethod
-    def from_api_list(cls, symbol: str, data: list) -> "Kline":
+    def from_api(cls, data: list) -> "Kline":
         return cls(
-            symbol=symbol,
-            timestamp=datetime.fromtimestamp(int(data[0]) / 1000, tz=timezone.utc),
+            timestamp=datetime.fromtimestamp(int(data[0]) / 1000, timezone.utc),
             open=Decimal(str(data[1])),
             high=Decimal(str(data[2])),
             low=Decimal(str(data[3])),

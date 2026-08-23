@@ -1,13 +1,10 @@
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
 
-
-class CVD(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    symbol: str
+@dataclass(slots=True)
+class CVD:
     timestamp: datetime
     value: Decimal
     delta: Decimal
