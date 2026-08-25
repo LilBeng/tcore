@@ -25,6 +25,12 @@ class Coin:
         self.funding_rates = deque(self.funding_rates, maxlen=max_len)
         self.cvds = deque(self.cvds, maxlen=max_len)
 
+    def clear(self) -> None:
+        self.klines.clear()
+        self.open_interests.clear()
+        self.funding_rates.clear()
+        self.cvds.clear()
+
     @staticmethod
     def _add(queue: deque, obj: Union[Ticker, Kline, FundingRate, OpenInterest, CVD]) -> None:
         if queue and queue[-1].timestamp == obj.timestamp:

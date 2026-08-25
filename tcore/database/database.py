@@ -20,7 +20,7 @@ class Config:
         return f"sqlite+aiosqlite:///{self.path}"
 
 
-class Database:
+class Database(object):
     def __init__(self, config: Config) -> None:
         self._engine: AsyncEngine = create_async_engine(
             config.url,
