@@ -9,7 +9,9 @@ class DatabaseService(object):
             self.database.klines,
             self.database.open_interests,
             self.database.funding_rates,
-            self.database.cvds
+            self.database.cvds,
+            config.buffer_size,
+            config.flush_interval
         )
 
     async def start(self) -> None:

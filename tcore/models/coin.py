@@ -38,7 +38,7 @@ class Coin:
         else:
             queue.append(obj)
 
-    def update_instrument_data(self, instrument: Instrument) -> None:
+    def update_instrument(self, instrument: Instrument) -> None:
         self.instrument = instrument
 
     def update_ticker(self, ticker: Ticker) -> None:

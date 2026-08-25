@@ -81,13 +81,18 @@ class MarketDataStream:
             state = PeriodState(period_start=period_start)
             self._states[symbol] = state
 
-        if period_start > state.period_start:
-            self._persist_period(symbol, state)
-
-            state = PeriodState(period_start=period_start)
-            self._states[symbol] = state
-
         return state
+
+    def _close_period(self, symbol: str, timestamp: datetime) -> None:
+        state = self._states.pop(symbol, None)
+        if state is None:
+            return None
+
+        self._persist_period(symbol, state)
+
+        self._states[symbol] = PeriodState(
+            period_start=timestamp + timedelta(minutes=self.interval.value)
+        )
 
     def _persist_period(self, symbol: str, state: PeriodState) -> None:
         self._last_cvds[symbol] += state.cvd_delta
@@ -216,7 +221,6 @@ class MarketDataStream:
             )
 
         instruments = {instrument.symbol: instrument for instrument in instruments}
-
         tickers = {ticker.symbol: ticker for ticker in tickers}
 
         for key, instrument in instruments.items():
@@ -238,7 +242,7 @@ class MarketDataStream:
 
         while self._running:
             try:
-                logger.info(f"Next update instruments in {self.update_time.total_seconds()}s")
+                logger.info(f"Next update instruments in {int(self.update_time.total_seconds())}s")
 
                 await asyncio.sleep(self.update_time.total_seconds())
 
@@ -254,6 +258,11 @@ class MarketDataStream:
 
     async def _update_instruments(self, symbols: Optional[list] = None) -> None:
         coins = await self._get_coins(symbols)
+
+        # Обновление данных инструмента
+        for key, coin in coins.items():
+            if actual_coin := self._coins.get(key):
+                actual_coin.update_instrument(coin.instrument)
 
         # Проверка для добавления/отмены подписки
         current_coin_symbols = set(self._coins.keys())
@@ -283,7 +292,6 @@ class MarketDataStream:
 
             coin = self._coins.get(symbol)
             if coin:
-                # Есть возможность проскока данных
                 await self.db_service.writer.flush(symbol)
 
                 klines, open_interests, funding_rates, cvds = await asyncio.gather(
@@ -398,6 +406,7 @@ class MarketDataStream:
 
         if data.get("confirm"):
             self._store_kline(symbol, kline)
+            self._close_period(symbol, kline.timestamp)
 
     # BYBIT CALLBACKS
     def handle_trade(self, msg: dict) -> None:
@@ -482,7 +491,7 @@ class MarketDataStream:
 
         for symbol in self._coins.keys():
             last_cvd = await self.db_service.database.cvds.get_last(symbol)
-            self._last_cvds[symbol] = last_cvd if last_cvd is not None else Decimal(0)
+            self._last_cvds[symbol] = last_cvd.value if last_cvd is not None else Decimal(0)
 
         symbols_to_subscribe = list(self._coins)
         if not symbols_to_subscribe:
@@ -495,6 +504,7 @@ class MarketDataStream:
         logger.info(
             f"Starting market stream: "
             f"{len(symbols_to_subscribe)} symbols, "
+            f"{len(self._actual_symbols)} actual symbols, "
             f"interval={self.interval.value}m, "
             f"chunk={self.chunk_size}"
         )

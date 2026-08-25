@@ -141,3 +141,11 @@ class BaseRepository(Generic[ModelT, EntityT]):
                 )
             )
             await session.commit()
+
+    async def get_symbols(self) -> set[str]:
+        async with self._session_factory() as session:
+            result = await session.scalars(
+                select(self.model.symbol).distinct()
+            )
+
+            return set(result.all())

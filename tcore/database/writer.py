@@ -33,7 +33,7 @@ class DatabaseWriter:
         open_interest_repository: OpenInterestRepository,
         funding_rate_repository: FundingRateRepository,
         cvd_repository: CVDRepository,
-        batch_size: int = 60,
+        buffer_size: int = 60,
         flush_interval: float = 120
     ):
         self._repositories = {
@@ -43,7 +43,7 @@ class DatabaseWriter:
             CVD: cvd_repository
         }
 
-        self._batch_size = batch_size
+        self._buffer_size = buffer_size
         self._flush_interval = flush_interval
 
         self._queue: asyncio.Queue[DatabaseRecord] = asyncio.Queue()
@@ -59,11 +59,7 @@ class DatabaseWriter:
             if buffer_symbol != symbol or not buffer:
                 continue
 
-            await self._flush_buffer(
-                buffer_symbol,
-                data_type,
-                buffer
-            )
+            await self._flush_buffer(buffer_symbol, data_type, buffer)
 
     async def start(self) -> None:
         if self._task is not None:
@@ -116,16 +112,17 @@ class DatabaseWriter:
         buffer = self._buffers[key]
         buffer.append(record.data)
 
-        if len(buffer) >= self._batch_size:
+        if len(buffer) >= self._buffer_size:
             await self._flush_buffer(record.symbol, type(record.data), buffer)
 
     async def _flush(self) -> None:
+        logger.debug(f"Write {len(self._buffers)} data buffer to DB...")
         for (symbol, data_type), buffer in list(self._buffers.items()):
             if buffer:
                 await self._flush_buffer(symbol, data_type, buffer)
 
     async def _flush_buffer(self, symbol: str, data_type: type[Record], buffer: list[Record]) -> None:
-        logger.info(f"[{symbol}] Write data buffer to DB ...")
+        logger.debug(f"Write to DB: symbol={symbol}, type={data_type.__name__}, records={len(buffer)}")
 
         repository = self._repositories[data_type]
 
