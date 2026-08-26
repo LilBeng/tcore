@@ -31,7 +31,7 @@ class MarketDataStream:
         interval: MarketInterval = MarketInterval.M1,
         chunk_size: int = 50,
         max_len: int = 100_000,
-        update_time: timedelta = timedelta(hours=1),
+        update_instruments_time: timedelta = timedelta(hours=1),
         test_net: bool = False
     ) -> None:
         assert chunk_size <= 50
@@ -42,7 +42,7 @@ class MarketDataStream:
         self.interval = interval
         self.chunk_size = chunk_size
         self.max_len = max_len
-        self.update_time = update_time
+        self.update_instruments_time = update_instruments_time
         self.test_net = test_net
 
         self._coins: dict[str, Coin] = {}
@@ -242,9 +242,9 @@ class MarketDataStream:
 
         while self._running:
             try:
-                logger.info(f"Next update instruments in {int(self.update_time.total_seconds())}s")
+                logger.info(f"Next update instruments in {int(self.update_instruments_time.total_seconds())}s")
 
-                await asyncio.sleep(self.update_time.total_seconds())
+                await asyncio.sleep(self.update_instruments_time.total_seconds())
 
                 logger.info("Update instruments ...")
 

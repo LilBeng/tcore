@@ -14,7 +14,7 @@ from tcore.database.repositories import (
 @dataclass(slots=True)
 class Config:
     path: str
-    buffer_size: int = 15
+    buffer_size: int = 1
     flush_interval: int = 120
 
     @property

@@ -1,9 +1,12 @@
+from abc import abstractmethod
 from datetime import datetime
 from typing import Generic, TypeVar, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, cast, BigInteger
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from tcore.models.enums import MarketInterval
 
 ModelT = TypeVar("ModelT")
 EntityT = TypeVar("EntityT")
@@ -21,6 +24,13 @@ class BaseRepository(Generic[ModelT, EntityT]):
 
     def _to_values(self, symbol: str, entity: EntityT) -> dict:
         raise NotImplementedError
+
+    def _get_period(self, interval: MarketInterval):
+        period_ms = int(interval) * 60_000
+
+        timestamp = cast(self.model.timestamp, BigInteger)
+
+        return (timestamp // period_ms) * period_ms
 
     async def _trim(self, session: AsyncSession, symbol: str) -> None:
         subquery = (
@@ -101,6 +111,10 @@ class BaseRepository(Generic[ModelT, EntityT]):
         models.reverse()
 
         return [self._to_entity(model) for model in models]
+
+    @abstractmethod
+    async def get_periods(self, symbol: str, interval: MarketInterval, limit: Optional[int] = None) -> list[EntityT]:
+        raise NotImplementedError
 
     async def get_last(self, symbol: str) -> Optional[EntityT]:
         async with self._session_factory() as session:
