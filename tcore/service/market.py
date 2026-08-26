@@ -29,20 +29,20 @@ class MarketDataStream:
         db_service: DatabaseService,
         category: Category = Category.LINEAR,
         interval: MarketInterval = MarketInterval.M1,
-        chunk_size: int = 50,
-        max_len: int = 100_000,
-        update_instruments_time: timedelta = timedelta(hours=1),
+        max_subscribe_size: int = 50,
+        max_deque_len: int = 100_000,
+        instruments_update_interval: timedelta = timedelta(hours=1),
         test_net: bool = False
     ) -> None:
-        assert chunk_size <= 50
+        assert max_subscribe_size <= 50
 
         self.coin_filter = coin_filter
         self.db_service = db_service
         self.category = category
         self.interval = interval
-        self.chunk_size = chunk_size
-        self.max_len = max_len
-        self.update_instruments_time = update_instruments_time
+        self.max_subscribe_size = max_subscribe_size
+        self.max_deque_len = max_deque_len
+        self.instruments_update_interval = instruments_update_interval
         self.test_net = test_net
 
         self._coins: dict[str, Coin] = {}
@@ -234,7 +234,7 @@ class MarketDataStream:
 
             if ticker:
                 coin = Coin(instrument, ticker)
-                coin.set_max_len(self.max_len)
+                coin.set_max_len(self.max_deque_len)
 
                 coins[instrument.symbol] = coin
 
@@ -248,9 +248,9 @@ class MarketDataStream:
 
         while self._running:
             try:
-                logger.info(f"Next update instruments in {int(self.update_instruments_time.total_seconds())}s")
+                logger.info(f"Next update instruments in {int(self.instruments_update_interval.total_seconds())}s")
 
-                await asyncio.sleep(self.update_instruments_time.total_seconds())
+                await asyncio.sleep(self.instruments_update_interval.total_seconds())
 
                 logger.info("Update instruments ...")
 
@@ -301,10 +301,10 @@ class MarketDataStream:
                 await self.db_service.writer.flush(symbol)
 
                 klines, open_interests, funding_rates, cvds = await asyncio.gather(
-                    self.db_service.database.klines.get(symbol, self.max_len),
-                    self.db_service.database.open_interests.get(symbol, self.max_len),
-                    self.db_service.database.funding_rates.get(symbol, self.max_len),
-                    self.db_service.database.cvds.get(symbol, self.max_len)
+                    self.db_service.database.klines.get(symbol, self.max_deque_len),
+                    self.db_service.database.open_interests.get(symbol, self.max_deque_len),
+                    self.db_service.database.funding_rates.get(symbol, self.max_deque_len),
+                    self.db_service.database.cvds.get(symbol, self.max_deque_len)
                 )
 
                 klines.extend(coin.klines)
@@ -312,10 +312,25 @@ class MarketDataStream:
                 funding_rates.extend(coin.funding_rates)
                 cvds.extend(coin.cvds)
 
-                coin.klines = deque({item.timestamp: item for item in klines}.values(), self.max_len)
-                coin.open_interests = deque({item.timestamp: item for item in open_interests}.values(), self.max_len)
-                coin.funding_rates = deque({item.timestamp: item for item in funding_rates}.values(), self.max_len)
-                coin.cvds = deque({item.timestamp: item for item in cvds}.values(), self.max_len)
+                coin.klines = deque(
+                    {item.timestamp: item for item in klines}.values(),
+                    self.max_deque_len
+                )
+
+                coin.open_interests = deque(
+                    {item.timestamp: item for item in open_interests}.values(),
+                    self.max_deque_len
+                )
+
+                coin.funding_rates = deque(
+                    {item.timestamp: item for item in funding_rates}.values(),
+                    self.max_deque_len
+                )
+
+                coin.cvds = deque(
+                    {item.timestamp: item for item in cvds}.values(),
+                    self.max_deque_len
+                )
 
         for symbol in current_actual_symbols - actual_symbols:
             self._actual_symbols.remove(symbol)
@@ -442,7 +457,7 @@ class MarketDataStream:
             return None
 
         for ws, symbols in self._ws_connections.items():
-            if len(symbols) >= self.chunk_size:
+            if len(symbols) >= self.max_subscribe_size:
                 continue
 
             ws.subscribe("tickers.{symbol}", self.handle_ticker, [symbol])
@@ -512,7 +527,7 @@ class MarketDataStream:
             f"{len(symbols_to_subscribe)} symbols, "
             f"{len(self._actual_symbols)} actual symbols, "
             f"interval={self.interval.value}m, "
-            f"chunk={self.chunk_size}"
+            f"chunk={self.max_subscribe_size}"
         )
 
         # Start worker BEFORE websocket connections.
@@ -527,8 +542,8 @@ class MarketDataStream:
         )
 
         # Create websocket connections.
-        for start in range(0, len(symbols_to_subscribe), self.chunk_size):
-            chunk = symbols_to_subscribe[start:start + self.chunk_size]
+        for start in range(0, len(symbols_to_subscribe), self.max_subscribe_size):
+            chunk = symbols_to_subscribe[start:start + self.max_subscribe_size]
 
             ws = self._create_connection(chunk)
 

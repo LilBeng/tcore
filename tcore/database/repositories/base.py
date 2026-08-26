@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from datetime import datetime
-from typing import Generic, TypeVar, Optional
+from typing import Generic, TypeVar, Optional, Any
 
 from sqlalchemy import delete, select, cast, BigInteger, func
 from sqlalchemy.dialects.sqlite import insert
@@ -25,7 +25,7 @@ class BaseRepository(Generic[ModelT, EntityT]):
     def _to_values(self, symbol: str, entity: EntityT) -> dict:
         raise NotImplementedError
 
-    def _get_period(self, interval: MarketInterval):
+    def _get_period(self, interval: MarketInterval) -> Any:
         period_ms = int(interval) * 60_000
 
         timestamp = cast(self.model.timestamp, BigInteger)

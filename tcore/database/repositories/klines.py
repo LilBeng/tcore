@@ -68,18 +68,10 @@ class KlineRepository(BaseRepository[KlineDB, Kline]):
         statement = (
             select(
                 subquery.c.period,
-                func.max(
-                    case(
-                        (subquery.c.first == 1, subquery.c.open)
-                    )
-                ).label("open"),
+                func.max(case((subquery.c.first == 1, subquery.c.open))).label("open"),
                 func.max(subquery.c.high).label("high"),
                 func.min(subquery.c.low).label("low"),
-                func.max(
-                    case(
-                        (subquery.c.last == 1, subquery.c.close)
-                    )
-                ).label("close"),
+                func.max(case((subquery.c.last == 1, subquery.c.close))).label("close"),
                 func.sum(subquery.c.volume).label("volume"),
                 func.sum(subquery.c.turnover).label("turnover")
             )
@@ -98,10 +90,7 @@ class KlineRepository(BaseRepository[KlineDB, Kline]):
 
         return [
             Kline(
-                timestamp=datetime.fromtimestamp(
-                    row.period / 1000,
-                    timezone.utc
-                ),
+                timestamp=datetime.fromtimestamp(row.period / 1000, timezone.utc),
                 open=row.open,
                 high=row.high,
                 low=row.low,

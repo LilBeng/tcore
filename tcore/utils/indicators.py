@@ -157,7 +157,7 @@ def bollinger_bands(
 
     middle = sum(closes, Decimal(0)) / period
     variance = sum((x - middle) ** 2 for x in closes) / period
-    std = sqrt(variance)
+    std = Decimal(sqrt(variance))
 
     return middle + deviations * std, middle, middle - deviations * std
 

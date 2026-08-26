@@ -55,19 +55,8 @@ class OpenInterestRepository(BaseRepository[OpenInterestDB, OpenInterest]):
         statement = (
             select(
                 subquery.c.period,
-                func.max(
-                    case(
-                        (subquery.c.first == 1, subquery.c.open_interest)
-                    )
-                ).label("open_interest"),
-                func.max(
-                    case(
-                        (
-                            subquery.c.first == 1,
-                            subquery.c.single_open_interest
-                        )
-                    )
-                ).label("single_open_interest")
+                func.max(case((subquery.c.first == 1, subquery.c.open_interest))).label("open_interest"),
+                func.max(case((subquery.c.first == 1, subquery.c.single_open_interest))).label("single_open_interest")
             )
             .group_by(subquery.c.period)
             .order_by(subquery.c.period.desc())
@@ -84,10 +73,7 @@ class OpenInterestRepository(BaseRepository[OpenInterestDB, OpenInterest]):
 
         return [
             OpenInterest(
-                timestamp=datetime.fromtimestamp(
-                    row.period / 1000,
-                    timezone.utc
-                ),
+                timestamp=datetime.fromtimestamp(row.period / 1000, timezone.utc),
                 open_interest=row.open_interest,
                 single_open_interest=row.single_open_interest
             )

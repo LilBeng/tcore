@@ -50,11 +50,7 @@ class CVDRepository(BaseRepository[CVDDB, CVD]):
         statement = (
             select(
                 subquery.c.period,
-                func.max(
-                    case(
-                        (subquery.c.last == 1, subquery.c.value)
-                    )
-                ).label("value"),
+                func.max(case((subquery.c.last == 1, subquery.c.value))).label("value"),
                 func.sum(subquery.c.delta).label("delta")
             )
             .group_by(subquery.c.period)
@@ -72,10 +68,7 @@ class CVDRepository(BaseRepository[CVDDB, CVD]):
 
         return [
             CVD(
-                timestamp=datetime.fromtimestamp(
-                    row.period / 1000,
-                    timezone.utc
-                ),
+                timestamp=datetime.fromtimestamp(row.period / 1000, timezone.utc),
                 value=row.value,
                 delta=row.delta
             )

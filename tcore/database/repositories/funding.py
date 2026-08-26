@@ -52,11 +52,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
         statement = (
             select(
                 subquery.c.period,
-                func.max(
-                    case(
-                        (subquery.c.first == 1, subquery.c.rate)
-                    )
-                ).label("rate")
+                func.max(case((subquery.c.first == 1, subquery.c.rate))).label("rate")
             )
             .group_by(subquery.c.period)
             .order_by(subquery.c.period.desc())
@@ -73,10 +69,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
 
         return [
             FundingRate(
-                timestamp=datetime.fromtimestamp(
-                    row.period / 1000,
-                    timezone.utc
-                ),
+                timestamp=datetime.fromtimestamp(row.period / 1000, timezone.utc),
                 rate=row.rate
             )
             for row in rows
