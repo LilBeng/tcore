@@ -71,7 +71,7 @@ class DataAggregator(object):
         result = []
 
         for timestamp, items in cls._group(data, interval).items():
-            item = items[-1]
+            item = items[0]
 
             result.append(
                 OpenInterest(
@@ -88,7 +88,7 @@ class DataAggregator(object):
         result = []
 
         for timestamp, items in cls._group(data, interval).items():
-            item = items[-1]
+            item = items[0]
 
             result.append(
                 FundingRate(

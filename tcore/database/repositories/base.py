@@ -2,7 +2,7 @@ from abc import abstractmethod
 from datetime import datetime
 from typing import Generic, TypeVar, Optional
 
-from sqlalchemy import delete, select, cast, BigInteger
+from sqlalchemy import delete, select, cast, BigInteger, func
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -30,7 +30,7 @@ class BaseRepository(Generic[ModelT, EntityT]):
 
         timestamp = cast(self.model.timestamp, BigInteger)
 
-        return (timestamp // period_ms) * period_ms
+        return func.floor(timestamp / period_ms) * period_ms
 
     async def _trim(self, session: AsyncSession, symbol: str) -> None:
         subquery = (

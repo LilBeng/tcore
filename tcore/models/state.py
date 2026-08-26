@@ -9,6 +9,7 @@ from tcore.models.tick import Ticker
 @dataclass(slots=True)
 class PeriodState:
     period_start: datetime
+    period_end: Optional[datetime] = None
+    last_ticker: Optional[Ticker] = None
     cvd_delta: Decimal = Decimal(0)
-    ticker: Optional[Ticker] = None
     trade_count: int = 0

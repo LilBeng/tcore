@@ -35,10 +35,10 @@ class OpenInterestRepository(BaseRepository[OpenInterestDB, OpenInterest]):
     ) -> list[OpenInterest]:
         period = self._get_period(interval).label("period")
 
-        last = func.row_number().over(
+        first = func.row_number().over(
             partition_by=period,
-            order_by=self.model.timestamp.desc()
-        ).label("last")
+            order_by=self.model.timestamp.asc()
+        ).label("first")
 
         subquery = (
             select(
@@ -46,7 +46,7 @@ class OpenInterestRepository(BaseRepository[OpenInterestDB, OpenInterest]):
                 self.model.open_interest,
                 self.model.single_open_interest,
                 period,
-                last
+                first
             )
             .where(self.model.symbol == symbol)
             .subquery()
@@ -57,13 +57,13 @@ class OpenInterestRepository(BaseRepository[OpenInterestDB, OpenInterest]):
                 subquery.c.period,
                 func.max(
                     case(
-                        (subquery.c.last == 1, subquery.c.open_interest)
+                        (subquery.c.first == 1, subquery.c.open_interest)
                     )
                 ).label("open_interest"),
                 func.max(
                     case(
                         (
-                            subquery.c.last == 1,
+                            subquery.c.first == 1,
                             subquery.c.single_open_interest
                         )
                     )
@@ -80,7 +80,7 @@ class OpenInterestRepository(BaseRepository[OpenInterestDB, OpenInterest]):
             result = await session.execute(statement)
             rows = result.all()
 
-        rows.reverse() # noqa
+        rows.reverse()  # noqa
 
         return [
             OpenInterest(

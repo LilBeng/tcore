@@ -88,48 +88,54 @@ class MarketDataStream:
         if state is None:
             return None
 
+        period_end = timestamp + timedelta(minutes=self.interval.value)
+        state.period_end = period_end
+
         self._persist_period(symbol, state)
 
         self._states[symbol] = PeriodState(
-            period_start=timestamp + timedelta(minutes=self.interval.value)
+            period_start=period_end
         )
 
     def _persist_period(self, symbol: str, state: PeriodState) -> None:
-        self._last_cvds[symbol] += state.cvd_delta
+        if state.period_end is not None:
+            self._last_cvds[symbol] += state.cvd_delta
 
-        self._store_cvd(
-            symbol,
-            CVD(
-                timestamp=state.period_start,
-                value=self._last_cvds[symbol],
-                delta=state.cvd_delta
-            )
-        )
-
-        if state.ticker is not None:
-            ticker = state.ticker
-
-            self._store_open_interest(
+            self._store_cvd(
                 symbol,
-                OpenInterest(
+                CVD(
                     timestamp=state.period_start,
-                    open_interest=ticker.open_interest,
-                    single_open_interest=ticker.single_open_interest
+                    value=self._last_cvds[symbol],
+                    delta=state.cvd_delta
                 )
             )
 
-            self._store_funding_rate(
-                symbol,
-                FundingRate(
-                    timestamp=state.period_start,
-                    rate=ticker.funding_rate
+            if state.last_ticker is not None:
+                ticker = state.last_ticker
+
+                self._store_open_interest(
+                    symbol,
+                    OpenInterest(
+                        timestamp=state.period_end,
+                        open_interest=ticker.open_interest,
+                        single_open_interest=ticker.single_open_interest
+                    )
                 )
-            )
 
-            if coin := self._coins.get(symbol):
-                coin.update_ticker(ticker)
+                self._store_funding_rate(
+                    symbol,
+                    FundingRate(
+                        timestamp=state.period_end,
+                        rate=ticker.funding_rate
+                    )
+                )
 
-        logger.debug(f"[{symbol}] period={state.period_start} trades={state.trade_count}")
+                if coin := self._coins.get(symbol):
+                    coin.update_ticker(ticker)
+
+            logger.debug(f"[{symbol}] period=({state.period_start}-{state.period_end}) trades={state.trade_count}")
+        else:
+            logger.warning(f"[{symbol}] period=({state.period_start}-not closed) trades={state.trade_count}")
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self.db_service.writer.add(symbol, kline)
@@ -373,7 +379,7 @@ class MarketDataStream:
 
         state = self._get_or_create_state(symbol, timestamp)
 
-        state.ticker = ticker
+        state.last_ticker = ticker
 
     # KLINE
     def _process_kline(self, msg: dict) -> None:
@@ -572,11 +578,7 @@ class MarketDataStream:
         # Persist final periods.
         for symbol in list(self._states):
             state = self._states.pop(symbol)
-
-            if state.cvd_delta or state.ticker is not None or state.trade_count:
-                self._persist_period(symbol, state)
-
-                logger.info(f"[{symbol}] Final period closed: {state.trade_count} trades")
+            self._persist_period(symbol, state)
 
         # Flush and stop database service.
         await self.db_service.stop()

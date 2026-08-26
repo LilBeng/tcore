@@ -26,24 +26,24 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
         }
 
     async def get_periods(
-        self,
-        symbol: str,
-        interval: MarketInterval,
-        limit: Optional[int] = None
+            self,
+            symbol: str,
+            interval: MarketInterval,
+            limit: Optional[int] = None
     ) -> list[FundingRate]:
         period = self._get_period(interval).label("period")
 
-        last = func.row_number().over(
+        first = func.row_number().over(
             partition_by=period,
-            order_by=self.model.timestamp.desc()
-        ).label("last")
+            order_by=self.model.timestamp.asc()
+        ).label("first")
 
         subquery = (
             select(
                 self.model.timestamp,
                 self.model.rate,
                 period,
-                last
+                first
             )
             .where(self.model.symbol == symbol)
             .subquery()
@@ -54,7 +54,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
                 subquery.c.period,
                 func.max(
                     case(
-                        (subquery.c.last == 1, subquery.c.rate)
+                        (subquery.c.first == 1, subquery.c.rate)
                     )
                 ).label("rate")
             )
@@ -69,7 +69,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
             result = await session.execute(statement)
             rows = result.all()
 
-        rows.reverse() # noqa
+        rows.reverse()  # noqa
 
         return [
             FundingRate(
