@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from tcore.database.models import Base
@@ -11,21 +9,10 @@ from tcore.database.repositories import (
 )
 
 
-@dataclass(slots=True)
-class Config:
-    path: str
-    buffer_size: int = 1
-    flush_interval: int = 120
-
-    @property
-    def url(self) -> str:
-        return f"sqlite+aiosqlite:///{self.path}"
-
-
 class Database(object):
-    def __init__(self, config: Config) -> None:
+    def __init__(self, url: str) -> None:
         self._engine: AsyncEngine = create_async_engine(
-            config.url,
+            url,
             connect_args={"timeout": 3},
         )
 

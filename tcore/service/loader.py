@@ -78,7 +78,7 @@ class HistoryDataLoader(object):
             batch = [Instrument(**item) for item in resp['result']['list']]
             instruments.extend(batch)
 
-            logger.info(
+            logger.debug(
                 f"Loaded batch of {len(batch)} instruments. "
                 f"Total: {len(instruments)}"
             )
@@ -147,7 +147,7 @@ class HistoryDataLoader(object):
             items = resp['result']['list']
             all_klines.extend(items)
 
-            logger.info(
+            logger.debug(
                 f"Loaded {len(items)} klines for {symbol}. "
                 f"Total: {len(all_klines)}/{limit}"
             )
@@ -173,7 +173,7 @@ class HistoryDataLoader(object):
             self,
             symbol: str,
             interval: OIInterval,
-            limit: int = 1000,
+            limit: int = 200,
             category: Category = Category.LINEAR,
             max_retries: int = 3
     ) -> list[OpenInterest]:
@@ -209,7 +209,7 @@ class HistoryDataLoader(object):
                 break
             all_items.extend(items)
 
-            logger.info(
+            logger.debug(
                 f"Loaded {len(items)} OI records for {symbol}. "
                 f"Total: {len(all_items)}/{limit}"
             )
@@ -223,10 +223,7 @@ class HistoryDataLoader(object):
         # Берём последние limit записей и разворачиваем (старые → новые)
         selected_items = all_items[-limit:] if len(all_items) > limit else all_items
 
-        result = [OpenInterest.from_api(item) for item in reversed(selected_items)]
-
-        logger.info(f"Loaded {len(result)} OI records for {symbol}")
-        return result
+        return [OpenInterest.from_api(item) for item in reversed(selected_items)]
 
     async def load_funding_rates(
             self,
@@ -252,10 +249,10 @@ class HistoryDataLoader(object):
 
         # API возвращает от новых к старым, разворачиваем
         items = resp['result']['list']
-        result = [FundingRate.from_api(item) for item in reversed(items)]
 
-        logger.info(f"Loaded {len(result)} funding rates for {symbol}")
-        return result
+        logger.debug(f"Loaded {len(items)} OI records for {symbol}")
+
+        return [FundingRate.from_api(item) for item in reversed(items)]
 
     async def load_trade_history(
             self,
@@ -281,10 +278,9 @@ class HistoryDataLoader(object):
 
         items = resp['result']['list'][:limit]
 
+        logger.debug(f"Loaded {len(items)} trades for {symbol}")
+
         # Сортировка от старых к новым
         sorted_items = sorted(items, key=lambda x: int(x.get('time', 0)))
 
-        result = [TradeHistory.from_api(item) for item in sorted_items]
-
-        logger.info(f"Loaded {len(result)} trades for {symbol}")
-        return result
+        return [TradeHistory.from_api(item) for item in sorted_items]

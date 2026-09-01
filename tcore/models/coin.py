@@ -1,5 +1,7 @@
+from bisect import bisect_left
 from collections import deque
 from dataclasses import field, dataclass
+from operator import attrgetter
 from typing import Union
 
 from tcore.models.cvd import CVD
@@ -33,10 +35,25 @@ class Coin:
 
     @staticmethod
     def _add(queue: deque, obj: Union[Ticker, Kline, FundingRate, OpenInterest, CVD]) -> None:
-        if queue and queue[-1].timestamp == obj.timestamp:
-            queue[-1] = obj
+        timestamps = [k.timestamp for k in queue]
+        pos = bisect_left(timestamps, obj.timestamp)
+
+        if pos < len(queue) and queue[pos].timestamp == obj.timestamp:
+            queue[pos] = obj
         else:
-            queue.append(obj)
+            queue.insert(pos, obj)
+
+            while len(queue) > queue.maxlen:
+                queue.popleft()
+
+    @staticmethod
+    def _sorted(queue: deque, objs: list[Union[Ticker, Kline, FundingRate, OpenInterest, CVD]]):
+        existing_dict = {k.timestamp: k for k in queue}
+
+        for obj in objs:
+            existing_dict[obj.timestamp] = obj
+
+        return sorted(existing_dict.values(), key=attrgetter('timestamp'))
 
     def update_instrument(self, instrument: Instrument) -> None:
         self.instrument = instrument
@@ -47,11 +64,35 @@ class Coin:
     def add_kline(self, kline: Kline) -> None:
         self._add(self.klines, kline)
 
+    def extend_klines(self, klines: list[Kline]) -> None:
+        self.klines = deque(
+            self._sorted(self.klines, klines),
+            maxlen=self.klines.maxlen
+        )
+
     def add_open_interest(self, open_interest: OpenInterest) -> None:
         self._add(self.open_interests, open_interest)
+
+    def extend_open_interests(self, open_interests: list[OpenInterest]) -> None:
+        self.open_interests = deque(
+            self._sorted(self.open_interests, open_interests),
+            maxlen=self.open_interests.maxlen
+        )
 
     def add_funding_rate(self, funding_rate: FundingRate) -> None:
         self._add(self.funding_rates, funding_rate)
 
+    def extend_funding_rates(self, funding_rates: list[FundingRate]) -> None:
+        self.funding_rates = deque(
+            self._sorted(self.funding_rates, funding_rates),
+            maxlen=self.funding_rates.maxlen
+        )
+
     def add_cvd(self, cvd: CVD) -> None:
         self._add(self.cvds, cvd)
+
+    def extend_cvds(self, cvds: list[CVD]) -> None:
+        self.cvds = deque(
+            self._sorted(self.cvds, cvds),
+            maxlen=self.cvds.maxlen
+        )

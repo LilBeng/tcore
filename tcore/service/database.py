@@ -1,10 +1,11 @@
-from tcore.database.database import Config, Database
+from tcore.database.database import Database
 from tcore.database.writer import DatabaseWriter
+from tcore.models.config import DBServiceConfig
 
 
 class DatabaseService(object):
-    def __init__(self, config: Config) -> None:
-        self.database = Database(config)
+    def __init__(self, config: DBServiceConfig) -> None:
+        self.database = Database(config.url)
         self.writer = DatabaseWriter(
             self.database.klines,
             self.database.open_interests,

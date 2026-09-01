@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Optional
 
 
 class InstrumentStatus(str, Enum):
@@ -57,3 +58,51 @@ class MarketInterval(int, Enum):
     H4 = 240  # 4 часа
     H6 = 360  # 6 часов
     H12 = 720  # 12 часов
+
+    @property
+    def kline_interval(self) -> KlineInterval:
+        match self.value:
+            case self.M1:
+                return KlineInterval.M1
+            case self.M3:
+                return KlineInterval.M3
+            case self.M5:
+                return KlineInterval.M5
+            case self.M15:
+                return KlineInterval.M15
+            case self.M30:
+                return KlineInterval.M30
+            case self.H1:
+                return KlineInterval.H1
+            case self.H2:
+                return KlineInterval.H2
+            case self.H4:
+                return KlineInterval.H4
+            case self.H6:
+                return KlineInterval.H6
+            case self.H12:
+                return KlineInterval.H12
+
+    @property
+    def oi_interval(self) -> Optional[OIInterval]:
+        match self.value:
+            case self.M1:
+                return None
+            case self.M3:
+                return None
+            case self.M5:
+                return OIInterval.M5
+            case self.M15:
+                return OIInterval.M15
+            case self.M30:
+                return OIInterval.M30
+            case self.H1:
+                return OIInterval.H1
+            case self.H2:
+                return None
+            case self.H4:
+                return OIInterval.H4
+            case self.H6:
+                return None
+            case self.H12:
+                return None
