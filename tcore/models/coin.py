@@ -47,7 +47,10 @@ class Coin:
                 queue.popleft()
 
     @staticmethod
-    def _sorted(queue: deque, objs: list[Union[Ticker, Kline, FundingRate, OpenInterest, CVD]]):
+    def _sorted(
+            queue: deque,
+            objs: list[Union[Ticker, Kline, FundingRate, OpenInterest, CVD]]
+    ) -> list[Union[Ticker, Kline, FundingRate, OpenInterest, CVD]]:
         existing_dict = {k.timestamp: k for k in queue}
 
         for obj in objs:
