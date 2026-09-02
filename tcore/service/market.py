@@ -6,6 +6,8 @@ from decimal import Decimal
 from typing import Optional
 
 from pybit.unified_trading import WebSocket, HTTP
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
 
 from tcore.models.coin import Coin
 from tcore.models.cvd import CVD
@@ -17,7 +19,7 @@ from tcore.models.state import PeriodState
 from tcore.models.tick import Ticker
 from tcore.service.database import DatabaseService
 from tcore.service.loader import HistoryDataLoader
-from tcore.utils.filters import CoinFilter
+from tcore.utils.filter import CoinFilter
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +32,17 @@ class MarketDataStream(object):
         category: Category = Category.LINEAR,
         interval: MarketInterval = MarketInterval.M5,
         max_subscribe_size: int = 50,
-        max_pool_connections: int = 5,
-        max_deque_len: int = 25_000,
+        max_list_len: int = 25_000,
         instruments_update_interval: timedelta = timedelta(hours=1),
         test_net: bool = False
     ) -> None:
         assert max_subscribe_size <= 50
-        assert max_pool_connections <= 5
 
         self.coin_filter = coin_filter
         self.db_service = db_service
         self.category = category
         self.max_subscribe_size = max_subscribe_size
-        self.max_deque_len = max_deque_len
+        self.max_list_len = max_list_len
         self.instruments_update_interval = instruments_update_interval
         self.test_net = test_net
 
@@ -53,6 +53,19 @@ class MarketDataStream(object):
         self._last_cvds: dict[str, Decimal] = {}
 
         self._session = HTTP(testnet=self.test_net)
+
+        adapter = HTTPAdapter(
+            pool_connections=100,
+            pool_maxsize=100,
+            max_retries=Retry(
+                total=3,
+                backoff_factor=0.1
+            )
+        )
+
+        self._session.client.mount('https://', adapter)
+        self._session.client.mount('http://', adapter)
+
         self._loader = HistoryDataLoader(self._session)
 
         self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
@@ -236,11 +249,7 @@ class MarketDataStream(object):
             ticker = tickers.get(key)
 
             if ticker:
-                coin = Coin(instrument, ticker)
-                coin.set_max_len(self.max_deque_len)
-
-                coins[instrument.symbol] = coin
-
+                coins[instrument.symbol] = Coin(instrument, ticker, max_len=self.max_list_len)
             else:
                 logger.warning(f"No ticker (symbol={key}) to subscribe")
 
@@ -298,7 +307,7 @@ class MarketDataStream(object):
 
         # Проверка для записи в память
         current_actual_symbols = set(self._actual_symbols)
-        actual_symbols = {symbol for symbol, coin in coins.items() if self.coin_filter.check_coin(coin)}
+        actual_symbols = {symbol for symbol, coin in coins.items() if self.coin_filter.validate(coin)}
 
         for symbol in actual_symbols - current_actual_symbols:
             self._actual_symbols.add(symbol)
@@ -310,10 +319,10 @@ class MarketDataStream(object):
                 await self.db_service.writer.flush(symbol)
 
                 klines, open_interests, funding_rates, cvds = await asyncio.gather(
-                    self.db_service.database.klines.get(symbol, self.max_deque_len),
-                    self.db_service.database.open_interests.get(symbol, self.max_deque_len),
-                    self.db_service.database.funding_rates.get(symbol, self.max_deque_len),
-                    self.db_service.database.cvds.get(symbol, self.max_deque_len)
+                    self.db_service.database.klines.get(symbol, self.max_list_len),
+                    self.db_service.database.open_interests.get(symbol, self.max_list_len),
+                    self.db_service.database.funding_rates.get(symbol, self.max_list_len),
+                    self.db_service.database.cvds.get(symbol, self.max_list_len)
                 )
 
                 coin.extend_klines(klines)
@@ -436,7 +445,7 @@ class MarketDataStream(object):
             klines, open_interests = await asyncio.gather(
                 *[
                     self._loader.load_klines(symbol, self._interval.kline_interval),
-                    self._loader.load_open_interest(symbol, self._interval.oi_interval)
+                    self._loader.load_open_interest(symbol, self._interval.oi_interval, 400)
                 ]
             )
 
@@ -517,7 +526,7 @@ class MarketDataStream(object):
         await self.db_service.start()
 
         self._coins = await self._get_coins(symbols)
-        self._actual_symbols = {symbol for symbol, coin in self._coins.items() if self.coin_filter.check_coin(coin)}
+        self._actual_symbols = {symbol for symbol, coin in self._coins.items() if self.coin_filter.validate(coin)}
 
         for symbol in self._coins.keys():
             self._last_cvds[symbol] = Decimal(0)
@@ -555,10 +564,9 @@ class MarketDataStream(object):
 
             logger.info(f"Downloads coins history data #{len(self._ws_connections) + 1}...")
 
-            actual_symbols = [symbol for symbol in chunk if symbol in self._actual_symbols]
-            for start_symbol in range(0, len(actual_symbols), 5):
-                chunk_symbol = actual_symbols[start_symbol: start_symbol + 5]
-                await asyncio.gather(*[self._update_coin_history(symbol) for symbol in chunk_symbol])
+            await asyncio.gather(
+                *[self._update_coin_history(symbol) for symbol in chunk if symbol in self._actual_symbols]
+            )
 
             ws = self._create_connection(chunk)
 

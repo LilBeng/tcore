@@ -1,5 +1,4 @@
 from bisect import bisect_left
-from collections import deque
 from dataclasses import field, dataclass
 from operator import attrgetter
 from typing import Union
@@ -10,7 +9,6 @@ from tcore.models.instrument import Instrument
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
 from tcore.models.tick import Ticker
-
 
 Data = Union[Kline, OpenInterest, FundingRate, CVD]
 
@@ -23,7 +21,7 @@ class Coin:
     open_interests: list[OpenInterest] = field(default_factory=list)
     funding_rates: list[FundingRate] = field(default_factory=list)
     cvds: list[CVD] = field(default_factory=list)
-    max_len: int = 100_000
+    max_len: int = 25_000
 
     def set_max_len(self, max_len: int) -> None:
         self.max_len = max_len

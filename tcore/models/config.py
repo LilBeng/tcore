@@ -1,7 +1,8 @@
-from pydantic import BaseModel
+from dataclasses import dataclass
 
 
-class DBServiceConfig(BaseModel):
+@dataclass(slots=True)
+class DBServiceConfig(object):
     path: str
     buffer_size: int = 60
     flush_interval: int = 120
