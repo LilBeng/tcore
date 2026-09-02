@@ -1,13 +1,11 @@
-from collections import deque
 from decimal import Decimal
-from itertools import islice
 from math import sqrt
 from typing import Optional
 
 from tcore.models.kline import Kline
 
 
-def _closes(klines: deque[Kline]) -> list[Decimal]:
+def _closes(klines: list[Kline]) -> list[Decimal]:
     return [k.close for k in klines]
 
 
@@ -24,14 +22,17 @@ def _ema(values: list[Decimal], period: int) -> Optional[Decimal]:
     return result
 
 
-def sma(klines: deque[Kline], period: int = 50) -> Optional[Decimal]:
+def sma(klines: list[Kline], period: int = 50) -> Optional[Decimal]:
     if len(klines) < period:
         return None
 
-    return sum((k.close for k in islice(klines, len(klines) - period, None)), Decimal(0)) / period
+    return sum(
+        (k.close for k in klines[-period:]),
+        Decimal(0)
+    ) / period
 
 
-def rsi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
+def rsi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
     if len(klines) < period + 1:
         return None
 
@@ -58,7 +59,7 @@ def rsi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
 
 
 def macd(
-    klines: deque[Kline],
+    klines: list[Kline],
     fast: int = 12,
     slow: int = 26,
     signal: int = 9
@@ -102,7 +103,7 @@ def macd(
     return macd_value, signal_value, macd_value - signal_value
 
 
-def mfi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
+def mfi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
     if len(klines) < period + 1:
         return None
 
@@ -130,53 +131,71 @@ def mfi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
     return Decimal(100) - Decimal(100) / (Decimal(1) + ratio)
 
 
-def cci(klines: deque[Kline], period: int = 20) -> Optional[Decimal]:
+def cci(klines: list[Kline], period: int = 20) -> Optional[Decimal]:
     if len(klines) < period:
         return None
 
-    values = [(k.high + k.low + k.close) / 3 for k in islice(klines, len(klines) - period, None)]
+    values = [
+        (k.high + k.low + k.close) / 3
+        for k in klines[-period:]
+    ]
 
     mean = sum(values, Decimal(0)) / period
-    deviation = sum((abs(v - mean) for v in values), Decimal(0)) / period
+    deviation = sum(
+        (abs(v - mean) for v in values),
+        Decimal(0)
+    ) / period
 
     if deviation == 0:
         return Decimal(0)
 
-    return (values[-1] - mean) / (Decimal(0.015) * deviation)
+    return (values[-1] - mean) / (Decimal("0.015") * deviation)
 
 
 def bollinger_bands(
-    klines: deque[Kline],
+    klines: list[Kline],
     period: int = 20,
     deviations: Decimal = Decimal(2),
 ) -> Optional[tuple[Decimal, Decimal, Decimal]]:
     if len(klines) < period:
         return None
 
-    closes = [k.close for k in islice(klines, len(klines) - period, None)]
+    closes = [k.close for k in klines[-period:]]
 
     middle = sum(closes, Decimal(0)) / period
     variance = sum((x - middle) ** 2 for x in closes) / period
     std = Decimal(sqrt(variance))
 
-    return middle + deviations * std, middle, middle - deviations * std
+    return (
+        middle + deviations * std,
+        middle,
+        middle - deviations * std
+    )
 
 
-def williams_r(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
+def williams_r(
+    klines: list[Kline],
+    period: int = 14
+) -> Optional[Decimal]:
     if len(klines) < period:
         return None
 
-    values = list(islice(klines, len(klines) - period, None))
+    values = klines[-period:]
     highest = max(k.high for k in values)
     lowest = min(k.low for k in values)
 
     if highest == lowest:
         return Decimal(0)
 
-    return Decimal(-100) * (highest - values[-1].close) / (highest - lowest)
+    return Decimal(-100) * (
+        highest - values[-1].close
+    ) / (highest - lowest)
 
 
-def stoch_rsi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
+def stoch_rsi(
+    klines: list[Kline],
+    period: int = 14
+) -> Optional[Decimal]:
     if len(klines) < period * 2:
         return None
 
@@ -195,13 +214,20 @@ def stoch_rsi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
     def calc_rsi(gain: Decimal, loss: Decimal) -> Decimal:
         if loss == 0:
             return Decimal(100) if gain else Decimal(50)
-        return Decimal(100) - Decimal(100) / (Decimal(1) + gain / loss)
+
+        return Decimal(100) - Decimal(100) / (
+            Decimal(1) + gain / loss
+        )
 
     rsi_values.append(calc_rsi(avg_gain, avg_loss))
 
     for i in range(period, len(gains)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        avg_gain = (
+            avg_gain * (period - 1) + gains[i]
+        ) / period
+        avg_loss = (
+            avg_loss * (period - 1) + losses[i]
+        ) / period
         rsi_values.append(calc_rsi(avg_gain, avg_loss))
 
     if len(rsi_values) < period:
@@ -216,21 +242,29 @@ def stoch_rsi(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
     return (values[-1] - low) / (high - low)
 
 
-def adx(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
+def adx(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
     if len(klines) < period * 2:
         return None
 
     trs, plus_dms, minus_dms = [], [], []
 
-    for current, previous in zip(klines, islice(klines, 0, len(klines) - 1)):
-        tr = max(current.high - current.low, abs(current.high - previous.close), abs(current.low - previous.close))
+    for current, previous in zip(klines[1:], klines[:-1]):
+        tr = max(
+            current.high - current.low,
+            abs(current.high - previous.close),
+            abs(current.low - previous.close)
+        )
 
         up = current.high - previous.high
         down = previous.low - current.low
 
         trs.append(tr)
-        plus_dms.append(up if up > down and up > 0 else Decimal(0))
-        minus_dms.append(down if down > up and down > 0 else Decimal(0))
+        plus_dms.append(
+            up if up > down and up > 0 else Decimal(0)
+        )
+        minus_dms.append(
+            down if down > up and down > 0 else Decimal(0)
+        )
 
     atr = sum(trs[:period], Decimal(0)) / period
     plus_dm = sum(plus_dms[:period], Decimal(0)) / period
@@ -255,8 +289,12 @@ def adx(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
 
     for i in range(period, len(trs)):
         atr = (atr * (period - 1) + trs[i]) / period
-        plus_dm = (plus_dm * (period - 1) + plus_dms[i]) / period
-        minus_dm = (minus_dm * (period - 1) + minus_dms[i]) / period
+        plus_dm = (
+            plus_dm * (period - 1) + plus_dms[i]
+        ) / period
+        minus_dm = (
+            minus_dm * (period - 1) + minus_dms[i]
+        ) / period
         dx_values.append(dx())
 
     if len(dx_values) < period:
@@ -268,3 +306,16 @@ def adx(klines: deque[Kline], period: int = 14) -> Optional[Decimal]:
         result = (result * (period - 1) + value) / period
 
     return result
+
+
+def roi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
+    if len(klines) < period:
+        return None
+
+    first = klines[-period].close
+    last = klines[-1].close
+
+    if first == 0:
+        return None
+
+    return (last - first) / first * 100
