@@ -2,7 +2,7 @@ import operator
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
-from typing import Union, Optional
+from typing import Union
 
 from tcore.models.coin import Coin
 
@@ -35,10 +35,10 @@ class Validator:
 
 @dataclass(slots=True)
 class CoinFilter(object):
-    ratio_x: Optional[Validator] = field(default_factory=Validator)
-    ratio_y: Optional[Validator] = field(default_factory=Validator)
-    funding_rate: Optional[Validator] = field(default_factory=Validator)
-    volume_24h: Optional[Validator] = field(default_factory=Validator)
+    ratio_x: Validator = field(default_factory=Validator)
+    ratio_y: Validator = field(default_factory=Validator)
+    funding_rate: Validator = field(default_factory=Validator)
+    volume_24h: Validator = field(default_factory=Validator)
 
     def validate(self, coin: Coin) -> bool:
         return all(
