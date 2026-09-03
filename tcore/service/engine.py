@@ -10,8 +10,9 @@ from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
 from tcore.models.coin import Coin
+from tcore.models.config import MarketConfig
 from tcore.models.cvd import CVD
-from tcore.models.enums import MarketInterval, Category, OrderSide
+from tcore.models.enums import OrderSide
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
@@ -19,75 +20,67 @@ from tcore.models.state import PeriodState
 from tcore.models.tick import Ticker
 from tcore.service.database import DatabaseService
 from tcore.service.loader import HistoryDataLoader
-from tcore.utils.filter import CoinFilter
+from tcore.utils.strategy import BaseStrategy
+from tcore.utils.validator import CoinValidator
 
 logger = logging.getLogger(__name__)
 
 
-class MarketDataStream(object):
-    def __init__(
-        self,
-        coin_filter: CoinFilter,
-        db_service: DatabaseService,
-        category: Category = Category.LINEAR,
-        interval: MarketInterval = MarketInterval.M5,
-        max_subscribe_size: int = 50,
-        max_list_len: int = 25_000,
-        instruments_update_interval: timedelta = timedelta(hours=1),
-        test_net: bool = False
-    ) -> None:
-        assert max_subscribe_size <= 50
-
-        self.coin_filter = coin_filter
-        self.db_service = db_service
-        self.category = category
-        self.max_subscribe_size = max_subscribe_size
-        self.max_list_len = max_list_len
-        self.instruments_update_interval = instruments_update_interval
-        self.test_net = test_net
-
-        self._interval = interval
+class TradingEngine(object):
+    def __init__(self, config: MarketConfig, coin_validator: CoinValidator, strategies: list[BaseStrategy]) -> None:
+        self._config = config
+        self._coin_validator = coin_validator
+        self._strategies = strategies
 
         self._coins: dict[str, Coin] = {}
         self._actual_symbols: set = set()
         self._last_cvds: dict[str, Decimal] = {}
 
-        self._session = HTTP(testnet=self.test_net)
+        self._db_service = DatabaseService(
+            url=self._config.url_datetime,
+            max_records=self._config.max_records,
+            buffer_size=self._config.buffer_size,
+            flush_interval=self._config.flush_interval
+        )
+
+        self._session = HTTP(
+            testnet=self._config.test_net
+        )
 
         adapter = HTTPAdapter(
-            pool_connections=100,
-            pool_maxsize=100,
+            pool_connections=self._config.pool_connections,
+            pool_maxsize=self._config.pool_maxsize,
             max_retries=Retry(
-                total=3,
-                backoff_factor=0.1
+                total=self._config.max_retries,
+                backoff_factor=self._config.backoff_factor
             )
         )
 
         self._session.client.mount('https://', adapter)
         self._session.client.mount('http://', adapter)
 
-        self._loader = HistoryDataLoader(self._session)
+        self._loader = HistoryDataLoader(
+            session=self._session
+        )
 
         self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
 
-        # State for every symbol.
         self._states: dict[str, PeriodState] = {}
 
-        # All websocket callbacks put events into this queue.
         self._queue: asyncio.Queue[Optional[tuple[str, dict]]] = asyncio.Queue()
 
-        # Async worker.
+        # Workers
         self._worker_task: Optional[asyncio.Task] = None
         self._instruments_task: Optional[asyncio.Task] = None
 
-        # Event loop used by pybit callbacks.
+        # Event loop
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         self._running = False
 
     def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
         period_start = timestamp.replace(
-            minute=timestamp.minute - (timestamp.minute % self._interval),
+            minute=timestamp.minute - (timestamp.minute % self._config.interval),
             second=0,
             microsecond=0
         )
@@ -104,7 +97,7 @@ class MarketDataStream(object):
         if state is None:
             return None
 
-        period_end = timestamp + timedelta(minutes=self._interval.value)
+        period_end = timestamp + timedelta(minutes=self._config.interval.value)
         state.period_end = period_end
 
         self._persist_period(symbol, state)
@@ -154,28 +147,28 @@ class MarketDataStream(object):
             logger.warning(f"[{symbol}] period=({state.period_start}-not closed) trades={state.trade_count}")
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
-        self.db_service.writer.add(symbol, kline)
+        self._db_service.writer.add(symbol, kline)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_kline(kline)
 
     def _store_cvd(self, symbol: str, cvd: CVD) -> None:
-        self.db_service.writer.add(symbol, cvd)
+        self._db_service.writer.add(symbol, cvd)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_cvd(cvd)
 
     def _store_open_interest(self, symbol: str, open_interest: OpenInterest) -> None:
-        self.db_service.writer.add(symbol, open_interest)
+        self._db_service.writer.add(symbol, open_interest)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_open_interest(open_interest)
 
     def _store_funding_rate(self, symbol: str, funding_rate: FundingRate) -> None:
-        self.db_service.writer.add(symbol, funding_rate)
+        self._db_service.writer.add(symbol, funding_rate)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
@@ -229,8 +222,8 @@ class MarketDataStream(object):
 
         if symbols:
             instruments, tickers = await asyncio.gather(
-                asyncio.gather(*(self._loader.load_instruments(self.category, symbol) for symbol in symbols)),
-                asyncio.gather(*(self._loader.load_tickers(self.category, symbol) for symbol in symbols))
+                asyncio.gather(*(self._loader.load_instruments(self._config.category, symbol) for symbol in symbols)),
+                asyncio.gather(*(self._loader.load_tickers(self._config.category, symbol) for symbol in symbols))
             )
 
             instruments = [instrument for batch in instruments for instrument in batch]
@@ -238,8 +231,8 @@ class MarketDataStream(object):
 
         else:
             instruments, tickers = await asyncio.gather(
-                self._loader.load_instruments(self.category),
-                self._loader.load_tickers(self.category)
+                self._loader.load_instruments(self._config.category),
+                self._loader.load_tickers(self._config.category)
             )
 
         instruments = {instrument.symbol: instrument for instrument in instruments}
@@ -249,7 +242,7 @@ class MarketDataStream(object):
             ticker = tickers.get(key)
 
             if ticker:
-                coins[instrument.symbol] = Coin(instrument, ticker, max_len=self.max_list_len)
+                coins[instrument.symbol] = Coin(instrument, ticker, max_len=self._config.max_list_len)
             else:
                 logger.warning(f"No ticker (symbol={key}) to subscribe")
 
@@ -260,9 +253,11 @@ class MarketDataStream(object):
 
         while self._running:
             try:
-                logger.info(f"Next update instruments in {int(self.instruments_update_interval.total_seconds())}s")
+                logger.info(
+                    f"Next update instruments in {int(self._config.instruments_update_timedelta.total_seconds())}s"
+                )
 
-                await asyncio.sleep(self.instruments_update_interval.total_seconds())
+                await asyncio.sleep(self._config.instruments_update_timedelta.total_seconds())
 
                 logger.info("Update instruments ...")
 
@@ -307,7 +302,7 @@ class MarketDataStream(object):
 
         # Проверка для записи в память
         current_actual_symbols = set(self._actual_symbols)
-        actual_symbols = {symbol for symbol, coin in coins.items() if self.coin_filter.validate(coin)}
+        actual_symbols = {symbol for symbol, coin in coins.items() if self._coin_validator.validate(coin)}
 
         for symbol in actual_symbols - current_actual_symbols:
             self._actual_symbols.add(symbol)
@@ -316,13 +311,13 @@ class MarketDataStream(object):
 
             coin = self._coins.get(symbol)
             if coin:
-                await self.db_service.writer.flush(symbol)
+                await self._db_service.writer.flush(symbol)
 
                 klines, open_interests, funding_rates, cvds = await asyncio.gather(
-                    self.db_service.database.klines.get(symbol, self.max_list_len),
-                    self.db_service.database.open_interests.get(symbol, self.max_list_len),
-                    self.db_service.database.funding_rates.get(symbol, self.max_list_len),
-                    self.db_service.database.cvds.get(symbol, self.max_list_len)
+                    self._db_service.database.klines.get(symbol, self._config.max_list_len),
+                    self._db_service.database.open_interests.get(symbol, self._config.max_list_len),
+                    self._db_service.database.funding_rates.get(symbol, self._config.max_list_len),
+                    self._db_service.database.cvds.get(symbol, self._config.max_list_len)
                 )
 
                 coin.extend_klines(klines)
@@ -441,11 +436,19 @@ class MarketDataStream(object):
     async def _update_coin_history(self, symbol: str) -> None:
         coin = self._coins.get(symbol)
 
-        if self._interval.oi_interval:
+        if self._config.interval.oi_interval:
             klines, open_interests = await asyncio.gather(
                 *[
-                    self._loader.load_klines(symbol, self._interval.kline_interval),
-                    self._loader.load_open_interest(symbol, self._interval.oi_interval, 400)
+                    self._loader.load_klines(
+                        symbol,
+                        self._config.interval.kline_interval,
+                        self._config.klines_history_limit
+                    ),
+                    self._loader.load_open_interest(
+                        symbol,
+                        self._config.interval.oi_interval,
+                        self._config.oi_history_limit
+                    )
                 ]
             )
 
@@ -453,18 +456,22 @@ class MarketDataStream(object):
             coin.extend_open_interests(open_interests)
 
         else:
-            klines = await self._loader.load_klines(symbol, self._interval.kline_interval)
+            klines = await self._loader.load_klines(
+                symbol,
+                self._config.interval.kline_interval,
+                self._config.klines_history_limit
+            )
 
             coin.extend_klines(klines)
 
     # WEBSOCKET
     def _create_connection(self, symbols: list[str]) -> WebSocket:
         ws = WebSocket(
-            testnet=self.test_net,
-            channel_type=self.category.value
+            testnet=self._config.test_net,
+            channel_type=self._config.category.value
         )
 
-        ws.subscribe(f"kline.{self._interval.value}.{{symbol}}", self.handle_kline, symbols)
+        ws.subscribe(f"kline.{self._config.interval.value}.{{symbol}}", self.handle_kline, symbols)
         ws.subscribe("publicTrade.{symbol}", self.handle_trade, symbols)
         ws.subscribe("tickers.{symbol}", self.handle_ticker, symbols)
 
@@ -475,12 +482,12 @@ class MarketDataStream(object):
             return None
 
         for ws, symbols in self._ws_connections.items():
-            if len(symbols) >= self.max_subscribe_size:
+            if len(symbols) >= self._config.max_subscribe_size:
                 continue
 
             ws.subscribe("tickers.{symbol}", self.handle_ticker, [symbol])
             ws.subscribe("publicTrade.{symbol}", self.handle_trade, [symbol])
-            ws.subscribe(f"kline.{self._interval.value}.{{symbol}}", self.handle_kline, [symbol])
+            ws.subscribe(f"kline.{self._config.interval.value}.{{symbol}}", self.handle_kline, [symbol])
 
             symbols.add(symbol)
 
@@ -503,7 +510,7 @@ class MarketDataStream(object):
 
         ws.unsubscribe(f"tickers.{symbol}")
         ws.unsubscribe(f"publicTrade.{symbol}")
-        ws.unsubscribe(f"kline.{self._interval.value}.{symbol}")
+        ws.unsubscribe(f"kline.{self._config.interval.value}.{symbol}")
 
         symbols.remove(symbol)
 
@@ -523,10 +530,10 @@ class MarketDataStream(object):
             return None
 
         # Start database service.
-        await self.db_service.start()
+        await self._db_service.start()
 
         self._coins = await self._get_coins(symbols)
-        self._actual_symbols = {symbol for symbol, coin in self._coins.items() if self.coin_filter.validate(coin)}
+        self._actual_symbols = {symbol for symbol, coin in self._coins.items() if self._coin_validator.validate(coin)}
 
         for symbol in self._coins.keys():
             self._last_cvds[symbol] = Decimal(0)
@@ -543,8 +550,8 @@ class MarketDataStream(object):
             f"Starting market stream: "
             f"{len(symbols_to_subscribe)} symbols, "
             f"{len(self._actual_symbols)} actual symbols, "
-            f"interval={self._interval.value}m, "
-            f"chunk={self.max_subscribe_size}"
+            f"interval={self._config.interval.value}m, "
+            f"chunk={self._config.max_subscribe_size}"
         )
 
         # Start worker BEFORE websocket connections.
@@ -559,8 +566,8 @@ class MarketDataStream(object):
         )
 
         # Create websocket connections.
-        for start in range(0, len(symbols_to_subscribe), self.max_subscribe_size):
-            chunk = symbols_to_subscribe[start:start + self.max_subscribe_size]
+        for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
+            chunk = symbols_to_subscribe[start:start + self._config.max_subscribe_size]
 
             logger.info(f"Downloads coins history data #{len(self._ws_connections) + 1}...")
 
@@ -619,7 +626,7 @@ class MarketDataStream(object):
             self._persist_period(symbol, state)
 
         # Flush and stop database service.
-        await self.db_service.stop()
+        await self._db_service.stop()
 
         self._loop = None
 

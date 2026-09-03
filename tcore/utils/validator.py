@@ -34,7 +34,7 @@ class Validator:
 
 
 @dataclass(slots=True)
-class CoinFilter(object):
+class CoinValidator(object):
     ratio_x: Validator = field(default_factory=Validator)
     ratio_y: Validator = field(default_factory=Validator)
     funding_rate: Validator = field(default_factory=Validator)

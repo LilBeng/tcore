@@ -14,10 +14,10 @@ EntityT = TypeVar("EntityT")
 
 class BaseRepository(Generic[ModelT, EntityT]):
     model: type[ModelT]
-    max_records: int = 150_000
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], max_records: int = 150_000) -> None:
         self._session_factory = session_factory
+        self._max_records = max_records
 
     def _to_entity(self, model: ModelT) -> EntityT:
         raise NotImplementedError
@@ -37,7 +37,7 @@ class BaseRepository(Generic[ModelT, EntityT]):
             select(self.model.timestamp)
             .where(self.model.symbol == symbol)
             .order_by(self.model.timestamp.desc())
-            .offset(self.max_records)
+            .offset(self._max_records)
         )
 
         await session.execute(

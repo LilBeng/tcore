@@ -10,7 +10,7 @@ from tcore.database.repositories import (
 
 
 class Database(object):
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, max_records: int) -> None:
         self._engine: AsyncEngine = create_async_engine(
             url,
             connect_args={"timeout": 3},
@@ -21,10 +21,10 @@ class Database(object):
             expire_on_commit=False,
         )
 
-        self.klines = KlineRepository(self._session_factory)
-        self.open_interests = OpenInterestRepository(self._session_factory)
-        self.funding_rates = FundingRateRepository(self._session_factory)
-        self.cvds = CVDRepository(self._session_factory)
+        self.klines = KlineRepository(self._session_factory, max_records)
+        self.open_interests = OpenInterestRepository(self._session_factory, max_records)
+        self.funding_rates = FundingRateRepository(self._session_factory, max_records)
+        self.cvds = CVDRepository(self._session_factory, max_records)
 
     async def initialize(self) -> None:
         async with self._engine.begin() as connection:

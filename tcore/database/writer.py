@@ -26,7 +26,7 @@ class DatabaseRecord:
     data: Record
 
 
-class DatabaseWriter:
+class DatabaseWriter(object):
     def __init__(
         self,
         kline_repository: KlineRepository,
