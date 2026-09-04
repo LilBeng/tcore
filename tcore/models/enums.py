@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, auto
 from typing import Optional
 
 
@@ -106,3 +106,9 @@ class MarketInterval(int, Enum):
                 return None
             case self.H12:
                 return None
+
+
+class EventType(Enum):
+    KLINE = auto()
+    TRADE = auto()
+    TICKER = auto()

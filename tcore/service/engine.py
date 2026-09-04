@@ -12,7 +12,7 @@ from urllib3 import Retry
 from tcore.models.coin import Coin
 from tcore.models.config import EngineConfig
 from tcore.models.cvd import CVD
-from tcore.models.enums import OrderSide
+from tcore.models.enums import OrderSide, EventType
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
@@ -67,7 +67,7 @@ class TradingEngine(object):
         self._states: dict[str, PeriodState] = {}
 
         # Queues
-        self._market_queue: asyncio.Queue[Optional[tuple[str, dict]]] = asyncio.Queue()
+        self._market_queue: asyncio.Queue[Optional[tuple[EventType, dict]]] = asyncio.Queue()
         self._strategies_queue: asyncio.Queue[Optional[BaseStrategy]] = asyncio.Queue()
 
         # Workers
@@ -201,13 +201,13 @@ class TradingEngine(object):
 
                 event_type, msg = event
 
-                if event_type == "trade":
+                if event_type == EventType.TRADE:
                     self._process_trade(msg)
 
-                elif event_type == "ticker":
+                elif event_type == EventType.TICKER:
                     self._process_ticker(msg)
 
-                elif event_type == "kline":
+                elif event_type == EventType.KLINE:
                     self._process_kline(msg)
 
                 else:
@@ -483,13 +483,13 @@ class TradingEngine(object):
             self._close_period(symbol)
 
     def handle_trade(self, msg: dict) -> None:
-        self._enqueue(self._market_queue, "trade", msg)
+        self._enqueue(self._market_queue, EventType.TRADE, msg)
 
     def handle_ticker(self, msg: dict) -> None:
-        self._enqueue(self._market_queue, "ticker", msg)
+        self._enqueue(self._market_queue, EventType.TICKER, msg)
 
     def handle_kline(self, msg: dict) -> None:
-        self._enqueue(self._market_queue, "kline", msg)
+        self._enqueue(self._market_queue, EventType.KLINE, msg)
 
     def subscribe_symbol(self, symbol: str) -> None:
         if any(symbol in symbols for symbols in self._ws_connections.values()):
