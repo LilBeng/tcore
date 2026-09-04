@@ -3,7 +3,7 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Any
 
 from pybit.unified_trading import WebSocket, HTTP
 from requests.adapters import HTTPAdapter
@@ -80,6 +80,20 @@ class TradingEngine(object):
 
         self._running = False
 
+    def _enqueue(self, queue: asyncio.Queue, *items: Any) -> None:
+        if self._loop is None or self._loop.is_closed():
+            return None
+
+        if not items:
+            return None
+
+        payload = items[0] if len(items) == 1 else items
+
+        try:
+            self._loop.call_soon_threadsafe(queue.put_nowait, payload)
+        except RuntimeError:
+            pass
+
     def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
         state = self._states.get(symbol)
         if state is None:
@@ -143,15 +157,8 @@ class TradingEngine(object):
             period_start=period_end
         )
 
-        if self._loop is None or self._loop.is_closed():
-            return None
-
-        try:
-            for strategy in self._strategies:
-                self._loop.call_soon_threadsafe(self._strategies_queue.put_nowait, strategy)
-        except RuntimeError:
-            # Event loop has already been stopped.
-            pass
+        for strategy in self._strategies:
+            self._enqueue(self._strategies_queue, strategy)
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self._db_service.writer.add(symbol, kline)
@@ -180,16 +187,6 @@ class TradingEngine(object):
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_funding_rate(funding_rate)
-
-    def _enqueue(self, event_type: str, msg: dict) -> None:
-        if self._loop is None or self._loop.is_closed():
-            return None
-
-        try:
-            self._loop.call_soon_threadsafe(self._market_queue.put_nowait, (event_type, msg))
-        except RuntimeError:
-            # Event loop has already been stopped.
-            pass
 
     async def _worker_market_data(self) -> None:
         logger.info("Market data worker started")
@@ -244,7 +241,21 @@ class TradingEngine(object):
                 logger.exception(f"Failed to update instruments: {exception}")
 
     async def _worker_strategy_executor(self) -> None:
-        ...
+        logger.info("Strategy executor worker started")
+
+        while True:
+            strategy = await self._strategies_queue.get()
+
+            try:
+                # None is our shutdown signal.
+                if strategy is None:
+                    return None
+
+            except Exception as exception:
+                logger.exception(f"Strategy event processing error: {exception}")
+
+            finally:
+                self._strategies_queue.task_done()
 
     async def _get_coins(self, symbols: Optional[list] = None) -> dict[str, Coin]:
         coins = {}
@@ -472,13 +483,13 @@ class TradingEngine(object):
             self._close_period(symbol)
 
     def handle_trade(self, msg: dict) -> None:
-        self._enqueue("trade", msg)
+        self._enqueue(self._market_queue, "trade", msg)
 
     def handle_ticker(self, msg: dict) -> None:
-        self._enqueue("ticker", msg)
+        self._enqueue(self._market_queue, "ticker", msg)
 
     def handle_kline(self, msg: dict) -> None:
-        self._enqueue("kline", msg)
+        self._enqueue(self._market_queue, "kline", msg)
 
     def subscribe_symbol(self, symbol: str) -> None:
         if any(symbol in symbols for symbols in self._ws_connections.values()):
@@ -526,7 +537,6 @@ class TradingEngine(object):
 
             logger.info("Empty WebSocket closed")
 
-    # START
     async def start(self, symbols: Optional[list] = None) -> None:
         if self._running:
             logger.warning("Market data stream already running")
@@ -561,14 +571,14 @@ class TradingEngine(object):
             name="market-data-worker"
         )
 
-        self._instruments_updater_task = asyncio.create_task(
-            self._worker_instruments_updater(symbols),
-            name="instruments-updater-worker"
-        )
-
         self._strategy_executor_task = asyncio.create_task(
             self._worker_strategy_executor(),
             name="strategy-executor-worker"
+        )
+
+        self._instruments_updater_task = asyncio.create_task(
+            self._worker_instruments_updater(symbols),
+            name="instruments-updater-worker"
         )
 
         for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
@@ -588,7 +598,6 @@ class TradingEngine(object):
 
         logger.info(f"Market stream started: {len(self._ws_connections)} WebSockets")
 
-    # STOP
     async def stop(self) -> None:
         if not self._running:
             return None
