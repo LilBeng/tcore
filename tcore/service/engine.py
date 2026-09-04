@@ -10,7 +10,7 @@ from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
 from tcore.models.coin import Coin
-from tcore.models.config import MarketConfig
+from tcore.models.config import EngineConfig
 from tcore.models.cvd import CVD
 from tcore.models.enums import OrderSide
 from tcore.models.funding import FundingRate
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class TradingEngine(object):
-    def __init__(self, config: MarketConfig, coin_validator: CoinValidator, strategies: list[BaseStrategy]) -> None:
+    def __init__(self, config: EngineConfig, coin_validator: CoinValidator, strategies: list[BaseStrategy]) -> None:
         self._config = config
         self._coin_validator = coin_validator
         self._strategies = strategies
@@ -56,8 +56,7 @@ class TradingEngine(object):
             )
         )
 
-        self._session.client.mount('https://', adapter)
-        self._session.client.mount('http://', adapter)
+        self._session.client.mount("://", adapter)
 
         self._loader = HistoryDataLoader(
             session=self._session
@@ -67,11 +66,14 @@ class TradingEngine(object):
 
         self._states: dict[str, PeriodState] = {}
 
-        self._queue: asyncio.Queue[Optional[tuple[str, dict]]] = asyncio.Queue()
+        # Queues
+        self._market_queue: asyncio.Queue[Optional[tuple[str, dict]]] = asyncio.Queue()
+        self._strategies_queue: asyncio.Queue[Optional[BaseStrategy]] = asyncio.Queue()
 
         # Workers
-        self._worker_task: Optional[asyncio.Task] = None
-        self._instruments_task: Optional[asyncio.Task] = None
+        self._market_data_task: Optional[asyncio.Task] = None
+        self._strategy_executor_task: Optional[asyncio.Task] = None
+        self._instruments_updater_task: Optional[asyncio.Task] = None
 
         # Event loop
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -79,72 +81,77 @@ class TradingEngine(object):
         self._running = False
 
     def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
-        period_start = timestamp.replace(
-            minute=timestamp.minute - (timestamp.minute % self._config.interval),
-            second=0,
-            microsecond=0
-        )
-
         state = self._states.get(symbol)
         if state is None:
+            period_start = timestamp.replace(
+                minute=timestamp.minute - (timestamp.minute % self._config.interval),
+                second=0,
+                microsecond=0
+            )
             state = PeriodState(period_start=period_start)
             self._states[symbol] = state
 
         return state
 
-    def _close_period(self, symbol: str, timestamp: datetime) -> None:
+    def _close_period(self, symbol: str) -> None:
         state = self._states.pop(symbol, None)
         if state is None:
             return None
 
-        period_end = timestamp + timedelta(minutes=self._config.interval.value)
-        state.period_end = period_end
+        if kline := state.last_kline:
+            self._store_kline(symbol, kline)
+        else:
+            logger.warning(f"[{symbol}] period=({state.period_start}-not closed) trades={state.trade_count}")
 
-        self._persist_period(symbol, state)
+        period_end = state.period_start + timedelta(minutes=self._config.interval.value)
+
+        self._last_cvds[symbol] += state.cvd_delta
+
+        self._store_cvd(
+            symbol,
+            CVD(
+                timestamp=state.period_start,
+                value=self._last_cvds[symbol],
+                delta=state.cvd_delta
+            )
+        )
+
+        if ticker := state.last_ticker:
+            self._store_open_interest(
+                symbol,
+                OpenInterest(
+                    timestamp=period_end,
+                    open_interest=ticker.open_interest,
+                    single_open_interest=ticker.single_open_interest
+                )
+            )
+
+            self._store_funding_rate(
+                symbol,
+                FundingRate(
+                    timestamp=period_end,
+                    rate=ticker.funding_rate
+                )
+            )
+
+            if coin := self._coins.get(symbol):
+                coin.update_ticker(ticker)
+
+        logger.debug(f"[{symbol}] period=({state.period_start}-{period_end}) trades={state.trade_count}")
 
         self._states[symbol] = PeriodState(
             period_start=period_end
         )
 
-    def _persist_period(self, symbol: str, state: PeriodState) -> None:
-        if state.period_end is not None:
-            self._last_cvds[symbol] += state.cvd_delta
+        if self._loop is None or self._loop.is_closed():
+            return None
 
-            self._store_cvd(
-                symbol,
-                CVD(
-                    timestamp=state.period_start,
-                    value=self._last_cvds[symbol],
-                    delta=state.cvd_delta
-                )
-            )
-
-            if state.last_ticker is not None:
-                ticker = state.last_ticker
-
-                self._store_open_interest(
-                    symbol,
-                    OpenInterest(
-                        timestamp=state.period_end,
-                        open_interest=ticker.open_interest,
-                        single_open_interest=ticker.single_open_interest
-                    )
-                )
-
-                self._store_funding_rate(
-                    symbol,
-                    FundingRate(
-                        timestamp=state.period_end,
-                        rate=ticker.funding_rate
-                    )
-                )
-
-                if coin := self._coins.get(symbol):
-                    coin.update_ticker(ticker)
-
-            logger.debug(f"[{symbol}] period=({state.period_start}-{state.period_end}) trades={state.trade_count}")
-        else:
-            logger.warning(f"[{symbol}] period=({state.period_start}-not closed) trades={state.trade_count}")
+        try:
+            for strategy in self._strategies:
+                self._loop.call_soon_threadsafe(self._strategies_queue.put_nowait, strategy)
+        except RuntimeError:
+            # Event loop has already been stopped.
+            pass
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self._db_service.writer.add(symbol, kline)
@@ -174,23 +181,21 @@ class TradingEngine(object):
             if coin := self._coins.get(symbol):
                 coin.add_funding_rate(funding_rate)
 
-    # EVENT QUEUE
     def _enqueue(self, event_type: str, msg: dict) -> None:
-        loop = self._loop
-        if loop is None or loop.is_closed():
+        if self._loop is None or self._loop.is_closed():
             return None
 
         try:
-            loop.call_soon_threadsafe(self._queue.put_nowait, (event_type, msg))
+            self._loop.call_soon_threadsafe(self._market_queue.put_nowait, (event_type, msg))
         except RuntimeError:
             # Event loop has already been stopped.
             pass
 
-    async def _worker(self) -> None:
+    async def _worker_market_data(self) -> None:
         logger.info("Market data worker started")
 
         while True:
-            event = await self._queue.get()
+            event = await self._market_queue.get()
 
             try:
                 # None is our shutdown signal.
@@ -215,7 +220,31 @@ class TradingEngine(object):
                 logger.exception(f"Market event processing error: {exception}")
 
             finally:
-                self._queue.task_done()
+                self._market_queue.task_done()
+
+    async def _worker_instruments_updater(self, symbols: Optional[list] = None) -> None:
+        logger.info("Instruments updater worker started")
+
+        while self._running:
+            try:
+                logger.info(
+                    f"Next update instruments in {int(self._config.instruments_update_timedelta.total_seconds())}s"
+                )
+
+                await asyncio.sleep(self._config.instruments_update_timedelta.total_seconds())
+
+                logger.info("Update instruments ...")
+
+                await self._update_instruments(symbols)
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as exception:
+                logger.exception(f"Failed to update instruments: {exception}")
+
+    async def _worker_strategy_executor(self) -> None:
+        ...
 
     async def _get_coins(self, symbols: Optional[list] = None) -> dict[str, Coin]:
         coins = {}
@@ -247,27 +276,6 @@ class TradingEngine(object):
                 logger.warning(f"No ticker (symbol={key}) to subscribe")
 
         return coins
-
-    async def _instruments_updater(self, symbols: Optional[list] = None) -> None:
-        logger.info("Instruments updater worker started")
-
-        while self._running:
-            try:
-                logger.info(
-                    f"Next update instruments in {int(self._config.instruments_update_timedelta.total_seconds())}s"
-                )
-
-                await asyncio.sleep(self._config.instruments_update_timedelta.total_seconds())
-
-                logger.info("Update instruments ...")
-
-                await self._update_instruments(symbols)
-
-            except asyncio.CancelledError:
-                raise
-
-            except Exception as exception:
-                logger.exception(f"Failed to update instruments: {exception}")
 
     async def _update_instruments(self, symbols: Optional[list] = None) -> None:
         coins = await self._get_coins(symbols)
@@ -338,101 +346,6 @@ class TradingEngine(object):
 
         del coins
 
-    # TRADE
-    def _process_trade(self, msg: dict) -> None:
-        topic = msg.get("topic", "")
-        symbol = topic.removeprefix("publicTrade.")
-
-        if symbol not in self._coins:
-            return None
-
-        data = msg.get("data")
-        if not data:
-            return None
-
-        for trade in data:
-            timestamp = datetime.fromtimestamp(int(trade.get("T")) / 1000, timezone.utc)
-
-            state = self._get_or_create_state(symbol, timestamp)
-
-            size = Decimal(trade.get("v"))
-
-            # Bybit:
-            # Buy  -> positive CVD
-            # Sell -> negative CVD
-            if trade.get("S") == OrderSide.BUY.value:
-                state.cvd_delta += size
-            else:
-                state.cvd_delta -= size
-
-            state.trade_count += 1
-
-    # TICKER
-    def _process_ticker(self, msg: dict) -> None:
-        topic = msg.get("topic", "")
-        symbol = topic.removeprefix("tickers.")
-
-        if symbol not in self._coins:
-            return None
-
-        data = msg.get("data")
-        if not data:
-            return None
-
-        timestamp = datetime.fromtimestamp(int(msg.get("ts")) / 1000, timezone.utc)
-
-        ticker = Ticker(
-            timestamp=timestamp,
-            **data
-        )
-
-        state = self._get_or_create_state(symbol, timestamp)
-
-        state.last_ticker = ticker
-
-    # KLINE
-    def _process_kline(self, msg: dict) -> None:
-        topic = msg.get("topic", "")
-
-        parts = topic.split(".")
-        if len(parts) < 3:
-            return None
-
-        symbol = parts[-1]
-
-        if symbol not in self._coins:
-            return None
-
-        data_list = msg.get("data")
-        if not data_list:
-            return None
-
-        data = data_list[0]
-
-        kline = Kline(
-            timestamp=datetime.fromtimestamp(int(data.get("start")) / 1000, timezone.utc),
-            open=Decimal(data.get("open")),
-            high=Decimal(data.get("high")),
-            low=Decimal(data.get("low")),
-            close=Decimal(data.get("close")),
-            volume=Decimal(data.get("volume")),
-            turnover=Decimal(data.get("turnover"))
-        )
-
-        if data.get("confirm"):
-            self._store_kline(symbol, kline)
-            self._close_period(symbol, kline.timestamp)
-
-    # BYBIT CALLBACKS
-    def handle_trade(self, msg: dict) -> None:
-        self._enqueue("trade", msg)
-
-    def handle_ticker(self, msg: dict) -> None:
-        self._enqueue("ticker", msg)
-
-    def handle_kline(self, msg: dict) -> None:
-        self._enqueue("kline", msg)
-
     async def _update_coin_history(self, symbol: str) -> None:
         coin = self._coins.get(symbol)
 
@@ -464,7 +377,6 @@ class TradingEngine(object):
 
             coin.extend_klines(klines)
 
-    # WEBSOCKET
     def _create_connection(self, symbols: list[str]) -> WebSocket:
         ws = WebSocket(
             testnet=self._config.test_net,
@@ -476,6 +388,97 @@ class TradingEngine(object):
         ws.subscribe("tickers.{symbol}", self.handle_ticker, symbols)
 
         return ws
+
+    def _process_trade(self, msg: dict) -> None:
+        topic = msg.get("topic", "")
+        symbol = topic.removeprefix("publicTrade.")
+
+        if symbol not in self._coins:
+            return None
+
+        data = msg.get("data")
+        if not data:
+            return None
+
+        for trade in data:
+            timestamp = datetime.fromtimestamp(int(trade.get("T")) / 1000, timezone.utc)
+
+            state = self._get_or_create_state(symbol, timestamp)
+
+            size = Decimal(trade.get("v"))
+
+            if trade.get("S") == OrderSide.BUY.value:
+                state.cvd_delta += size
+            else:
+                state.cvd_delta -= size
+
+            state.trade_count += 1
+
+    def _process_ticker(self, msg: dict) -> None:
+        topic = msg.get("topic", "")
+        symbol = topic.removeprefix("tickers.")
+
+        if symbol not in self._coins:
+            return None
+
+        data = msg.get("data")
+        if not data:
+            return None
+
+        timestamp = datetime.fromtimestamp(int(msg.get("ts")) / 1000, timezone.utc)
+
+        ticker = Ticker(
+            timestamp=timestamp,
+            **data
+        )
+
+        state = self._get_or_create_state(symbol, timestamp)
+
+        state.last_ticker = ticker
+
+    def _process_kline(self, msg: dict) -> None:
+        topic = msg.get("topic", "")
+
+        parts = topic.split(".")
+        if len(parts) < 3:
+            return None
+
+        symbol = parts[-1]
+
+        if symbol not in self._coins:
+            return None
+
+        data_list = msg.get("data")
+        if not data_list:
+            return None
+
+        data = data_list[0]
+
+        kline = Kline(
+            timestamp=datetime.fromtimestamp(int(data.get("start")) / 1000, timezone.utc),
+            open=Decimal(data.get("open")),
+            high=Decimal(data.get("high")),
+            low=Decimal(data.get("low")),
+            close=Decimal(data.get("close")),
+            volume=Decimal(data.get("volume")),
+            turnover=Decimal(data.get("turnover"))
+        )
+
+        if data.get("confirm"):
+            state = self._get_or_create_state(symbol, kline.timestamp)
+            if state:
+                state.last_kline = kline
+
+            self._close_period(symbol)
+
+    def handle_trade(self, msg: dict) -> None:
+        self._enqueue("trade", msg)
+
+    def handle_ticker(self, msg: dict) -> None:
+        self._enqueue("ticker", msg)
+
+    def handle_kline(self, msg: dict) -> None:
+        self._enqueue("kline", msg)
 
     def subscribe_symbol(self, symbol: str) -> None:
         if any(symbol in symbols for symbols in self._ws_connections.values()):
@@ -529,7 +532,6 @@ class TradingEngine(object):
             logger.warning("Market data stream already running")
             return None
 
-        # Start database service.
         await self._db_service.start()
 
         self._coins = await self._get_coins(symbols)
@@ -554,18 +556,21 @@ class TradingEngine(object):
             f"chunk={self._config.max_subscribe_size}"
         )
 
-        # Start worker BEFORE websocket connections.
-        self._worker_task = asyncio.create_task(
-            self._worker(),
+        self._market_data_task = asyncio.create_task(
+            self._worker_market_data(),
             name="market-data-worker"
         )
 
-        self._instruments_task = asyncio.create_task(
-            self._instruments_updater(symbols),
-            name="instruments-updater"
+        self._instruments_updater_task = asyncio.create_task(
+            self._worker_instruments_updater(symbols),
+            name="instruments-updater-worker"
         )
 
-        # Create websocket connections.
+        self._strategy_executor_task = asyncio.create_task(
+            self._worker_strategy_executor(),
+            name="strategy-executor-worker"
+        )
+
         for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
             chunk = symbols_to_subscribe[start:start + self._config.max_subscribe_size]
 
@@ -592,7 +597,6 @@ class TradingEngine(object):
 
         self._running = False
 
-        # Stop accepting new websocket events first.
         for ws in self._ws_connections:
             try:
                 ws.exit()
@@ -601,31 +605,32 @@ class TradingEngine(object):
 
         self._ws_connections.clear()
 
-        # Wait until all queued events are processed.
-        await self._queue.join()
+        await self._market_queue.join()
 
-        # Stop worker.
-        if self._worker_task is not None:
-            await self._queue.put(None)
-            await self._worker_task
-            self._worker_task = None
+        if self._market_data_task:
+            await self._market_queue.put(None)
+            await self._market_data_task
+            self._market_data_task = None
 
-        if self._instruments_task:
-            self._instruments_task.cancel()
+        await self._strategies_queue.join()
+
+        if self._strategy_executor_task is not None:
+            await self._strategies_queue.put(None)
+            await self._strategy_executor_task
+            self._strategy_executor_task = None
+
+        if self._instruments_updater_task:
+            self._instruments_updater_task.cancel()
 
             try:
-                await self._instruments_task
+                await self._instruments_updater_task
             except asyncio.CancelledError:
                 pass
 
-            self._instruments_task = None
+            self._instruments_updater_task = None
 
-        # Persist final periods.
-        for symbol in list(self._states):
-            state = self._states.pop(symbol)
-            self._persist_period(symbol, state)
+        self._states.clear()
 
-        # Flush and stop database service.
         await self._db_service.stop()
 
         self._loop = None

@@ -6,7 +6,7 @@ from tcore.models.enums import Category, MarketInterval
 
 
 @dataclass(slots=True)
-class MarketConfig(object):
+class EngineConfig(object):
     # Update
     instruments_update_timedelta: timedelta
 

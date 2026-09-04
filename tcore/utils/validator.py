@@ -39,6 +39,7 @@ class CoinValidator(object):
     ratio_y: Validator = field(default_factory=Validator)
     funding_rate: Validator = field(default_factory=Validator)
     volume_24h: Validator = field(default_factory=Validator)
+    turnover_24h: Validator = field(default_factory=Validator)
 
     def validate(self, coin: Coin) -> bool:
         return all(
@@ -46,6 +47,7 @@ class CoinValidator(object):
                 self.ratio_x.validate(coin.instrument.risk_parameters.ratio_x),
                 self.ratio_y.validate(coin.instrument.risk_parameters.ratio_y),
                 self.funding_rate.validate(coin.ticker.funding_rate),
-                self.volume_24h.validate(coin.ticker.volume_24h)
+                self.volume_24h.validate(coin.ticker.volume_24h),
+                self.volume_24h.validate(coin.ticker.turnover_24h)
             ]
         )
