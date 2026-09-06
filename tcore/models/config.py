@@ -10,7 +10,7 @@ class EngineConfig(object):
     # Update
     instruments_update_timedelta: timedelta
 
-    # Database
+    # MarketDataDB
     database_folder_path: str
     max_records: int = 50_000
     buffer_size: int = 60
@@ -42,3 +42,12 @@ class EngineConfig(object):
     def url_datetime(self) -> str:
         filepath = os.path.join(self.database_folder_path, f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
         return f"sqlite+aiosqlite:///{filepath}"
+
+
+@dataclass(slots=True)
+class UserDBConfig(object):
+    path: str
+
+    @property
+    def url(self) -> str:
+        return f"sqlite+aiosqlite:///{self.path}"

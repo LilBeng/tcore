@@ -26,7 +26,7 @@ class DatabaseRecord:
     data: Record
 
 
-class DatabaseWriter(object):
+class MarketDataDBWriter(object):
     def __init__(
         self,
         kline_repository: KlineRepository,
@@ -68,7 +68,7 @@ class DatabaseWriter(object):
         self._task = asyncio.create_task(self._worker())
 
     async def stop(self) -> None:
-        logger.info("Stopping database writer... ")
+        logger.info("Stopping Market data database writer... ")
 
         if self._task is None:
             return None
@@ -87,7 +87,7 @@ class DatabaseWriter(object):
 
     async def _worker(self) -> None:
         try:
-            logger.info("Database writer started")
+            logger.info("Market data database writer started")
             while True:
                 try:
                     record = await asyncio.wait_for(

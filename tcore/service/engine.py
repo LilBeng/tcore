@@ -18,7 +18,7 @@ from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
 from tcore.models.state import PeriodState
 from tcore.models.tick import Ticker
-from tcore.service.database import DatabaseService
+from tcore.service.database import MarketDataService
 from tcore.service.loader import HistoryDataLoader
 from tcore.utils.strategy import BaseStrategy
 from tcore.utils.validator import CoinValidator
@@ -36,7 +36,7 @@ class TradingEngine(object):
         self._actual_symbols: set = set()
         self._last_cvds: dict[str, Decimal] = {}
 
-        self._db_service = DatabaseService(
+        self._market_service = MarketDataService(
             url=self._config.url_datetime,
             max_records=self._config.max_records,
             buffer_size=self._config.buffer_size,
@@ -161,28 +161,28 @@ class TradingEngine(object):
             self._enqueue(self._strategies_queue, strategy)
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
-        self._db_service.writer.add(symbol, kline)
+        self._market_service.writer.add(symbol, kline)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_kline(kline)
 
     def _store_cvd(self, symbol: str, cvd: CVD) -> None:
-        self._db_service.writer.add(symbol, cvd)
+        self._market_service.writer.add(symbol, cvd)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_cvd(cvd)
 
     def _store_open_interest(self, symbol: str, open_interest: OpenInterest) -> None:
-        self._db_service.writer.add(symbol, open_interest)
+        self._market_service.writer.add(symbol, open_interest)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
                 coin.add_open_interest(open_interest)
 
     def _store_funding_rate(self, symbol: str, funding_rate: FundingRate) -> None:
-        self._db_service.writer.add(symbol, funding_rate)
+        self._market_service.writer.add(symbol, funding_rate)
 
         if symbol in self._actual_symbols:
             if coin := self._coins.get(symbol):
@@ -330,13 +330,13 @@ class TradingEngine(object):
 
             coin = self._coins.get(symbol)
             if coin:
-                await self._db_service.writer.flush(symbol)
+                await self._market_service.writer.flush(symbol)
 
                 klines, open_interests, funding_rates, cvds = await asyncio.gather(
-                    self._db_service.database.klines.get(symbol, self._config.max_list_len),
-                    self._db_service.database.open_interests.get(symbol, self._config.max_list_len),
-                    self._db_service.database.funding_rates.get(symbol, self._config.max_list_len),
-                    self._db_service.database.cvds.get(symbol, self._config.max_list_len)
+                    self._market_service.database.klines.get(symbol, self._config.max_list_len),
+                    self._market_service.database.open_interests.get(symbol, self._config.max_list_len),
+                    self._market_service.database.funding_rates.get(symbol, self._config.max_list_len),
+                    self._market_service.database.cvds.get(symbol, self._config.max_list_len)
                 )
 
                 coin.extend_klines(klines)
@@ -542,7 +542,7 @@ class TradingEngine(object):
             logger.warning("Market data stream already running")
             return None
 
-        await self._db_service.start()
+        await self._market_service.start()
 
         self._coins = await self._get_coins(symbols)
         self._actual_symbols = {symbol for symbol, coin in self._coins.items() if self._coin_validator.validate(coin)}
@@ -640,7 +640,7 @@ class TradingEngine(object):
 
         self._states.clear()
 
-        await self._db_service.stop()
+        await self._market_service.stop()
 
         self._loop = None
 
