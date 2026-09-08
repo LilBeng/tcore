@@ -56,9 +56,7 @@ class TradingEngine(object):
 
         self._session.client.mount("://", adapter)
 
-        self._loader = HistoryDataLoader(
-            session=self._session
-        )
+        self._loader = HistoryDataLoader(self._session)
 
         self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
 
@@ -77,6 +75,10 @@ class TradingEngine(object):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         self._running = False
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
 
     def _enqueue(self, queue: asyncio.Queue, *items: Any) -> None:
         if self._loop is None or self._loop.is_closed():
