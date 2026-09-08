@@ -33,8 +33,6 @@ class TradingEngine(object):
         self._strategies = strategies
 
         self._coins: dict[str, Coin] = {}
-        self._actual_symbols: set = set()
-        self._last_cvds: dict[str, Decimal] = {}
 
         self._market_service = MarketDataService(
             url=self._config.url_datetime,
@@ -94,39 +92,40 @@ class TradingEngine(object):
         except RuntimeError:
             pass
 
-    def _get_or_create_state(self, symbol: str, timestamp: datetime) -> PeriodState:
+    def _get_state(self, symbol: str) -> Optional[PeriodState]:
         state = self._states.get(symbol)
-        if state is None:
-            period_start = timestamp.replace(
-                minute=timestamp.minute - (timestamp.minute % self._config.interval),
-                second=0,
-                microsecond=0
-            )
-            state = PeriodState(period_start=period_start)
-            self._states[symbol] = state
+        if not state:
+            logger.warning(f"State for symbol={symbol} not found")
+        return state
+
+    def _create_state(self, symbol: str, cvd_value: Decimal = Decimal(0)) -> PeriodState:
+        state = PeriodState(last_cvd_value=cvd_value)
+
+        self._states[symbol] = state
 
         return state
 
     def _close_period(self, symbol: str) -> None:
-        state = self._states.pop(symbol, None)
+        state = self._get_state(symbol)
         if state is None:
             return None
 
         if kline := state.last_kline:
             self._store_kline(symbol, kline)
+
+            period_start = kline.timestamp
+
+            period_end = period_start + timedelta(minutes=self._config.interval.value)
+
         else:
-            logger.warning(f"[{symbol}] period=({state.period_start}-not closed) trades={state.trade_count}")
-
-        period_end = state.period_start + timedelta(minutes=self._config.interval.value)
-
-        self._last_cvds[symbol] += state.cvd_delta
+            logger.warning(f"[{symbol}] period not closed (trades={state.trade_count})")
+            return None
 
         self._store_cvd(
             symbol,
             CVD(
-                timestamp=state.period_start,
-                value=self._last_cvds[symbol],
-                delta=state.cvd_delta
+                timestamp=period_start,
+                value=state.last_cvd_value
             )
         )
 
@@ -151,11 +150,9 @@ class TradingEngine(object):
             if coin := self._coins.get(symbol):
                 coin.update_ticker(ticker)
 
-        logger.debug(f"[{symbol}] period=({state.period_start}-{period_end}) trades={state.trade_count}")
+        logger.debug(f"[{symbol}] period=({period_start}-{period_end}) trades={state.trade_count}")
 
-        self._states[symbol] = PeriodState(
-            period_start=period_end
-        )
+        state.reset()
 
         for strategy in self._strategies:
             self._enqueue(self._strategies_queue, strategy)
@@ -163,29 +160,29 @@ class TradingEngine(object):
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self._market_service.writer.add(symbol, kline)
 
-        if symbol in self._actual_symbols:
-            if coin := self._coins.get(symbol):
+        if coin := self._coins.get(symbol):
+            if coin.is_actual:
                 coin.add_kline(kline)
 
     def _store_cvd(self, symbol: str, cvd: CVD) -> None:
         self._market_service.writer.add(symbol, cvd)
 
-        if symbol in self._actual_symbols:
-            if coin := self._coins.get(symbol):
+        if coin := self._coins.get(symbol):
+            if coin.is_actual:
                 coin.add_cvd(cvd)
 
     def _store_open_interest(self, symbol: str, open_interest: OpenInterest) -> None:
         self._market_service.writer.add(symbol, open_interest)
 
-        if symbol in self._actual_symbols:
-            if coin := self._coins.get(symbol):
+        if coin := self._coins.get(symbol):
+            if coin.is_actual:
                 coin.add_open_interest(open_interest)
 
     def _store_funding_rate(self, symbol: str, funding_rate: FundingRate) -> None:
         self._market_service.writer.add(symbol, funding_rate)
 
-        if symbol in self._actual_symbols:
-            if coin := self._coins.get(symbol):
+        if coin := self._coins.get(symbol):
+            if coin.is_actual:
                 coin.add_funding_rate(funding_rate)
 
     async def _worker_market_data(self) -> None:
@@ -283,79 +280,84 @@ class TradingEngine(object):
 
             if ticker:
                 coins[instrument.symbol] = Coin(instrument, ticker, max_len=self._config.max_list_len)
+                coins[instrument.symbol].is_actual = self._coin_validator.validate(coins[instrument.symbol])
             else:
                 logger.warning(f"No ticker (symbol={key}) to subscribe")
 
         return coins
 
     async def _update_instruments(self, symbols: Optional[list] = None) -> None:
-        coins = await self._get_coins(symbols)
+        if symbols:
+            instruments = await asyncio.gather(
+                *[self._loader.load_instruments(self._config.category, symbol) for symbol in symbols]
+            )
 
-        # Обновление данных инструмента
-        for key, coin in coins.items():
-            if actual_coin := self._coins.get(key):
-                actual_coin.update_instrument(coin.instrument)
+            instruments = [instrument for batch in instruments for instrument in batch]
+        else:
+            instruments = await self._loader.load_instruments(self._config.category)
 
-        # Проверка для добавления/отмены подписки
-        current_coin_symbols = set(self._coins.keys())
-        actual_coin_symbols = set(coins.keys())
+        # Удаления монет, которых больше нет на бирже
+        actual_symbols = set([instrument.symbol for instrument in instruments])
+        for symbol in set(self._coins.keys()):
+            if symbol not in actual_symbols:
+                self.unsubscribe_symbol(symbol)
 
-        for symbol in actual_coin_symbols - current_coin_symbols:
-            self._coins[symbol] = coins[symbol]
+                self._coins.pop(symbol, None)
+                self._states.pop(symbol, None)
 
-            self.subscribe_symbol(symbol)
+        # Обновление инструментов
+        for instrument in instruments:
+            if coin := self._coins.get(instrument.symbol):
+                coin.update_instrument(instrument)
+            else:
+                # Если новый инструмент - добавляем монету
+                tickers = await self._loader.load_tickers(self._config.category, instrument.symbol)
+                if tickers:
+                    self._coins[instrument.symbol] = Coin(instrument, *tickers)
 
-            logger.info(f"New instrument added: {symbol}")
+                    self.subscribe_symbol(instrument.symbol)
 
-        for symbol in current_coin_symbols - actual_coin_symbols:
-            self.unsubscribe_symbol(symbol)
+                    logger.info(f"New instrument added: {instrument.symbol}")
+                else:
+                    logger.warning(f"No ticker (symbol={instrument.symbol}) to create Coin")
 
-            self._coins.pop(symbol, None)
-            self._states.pop(symbol, None)
-            self._last_cvds.pop(symbol, None)
+            # Проверяем актуальность монеты для мониторинга
+            if coin := self._coins.get(instrument.symbol):
+                is_actual = self._coin_validator.validate(coin)
+                if is_actual != coin.is_actual:
+                    if coin.is_actual:
+                        coin.clear()
+                    else:
+                        await self._update_coin_history(instrument.symbol)
+                        await self._market_service.writer.flush(instrument.symbol)
 
-            if symbol in self._actual_symbols:
-                self._actual_symbols.remove(symbol)
+                        klines, open_interests, funding_rates, cvds = await asyncio.gather(
+                            self._market_service.database.klines.get(
+                                instrument.symbol,
+                                self._config.max_list_len
+                            ),
+                            self._market_service.database.open_interests.get(
+                                instrument.symbol,
+                                self._config.max_list_len
+                            ),
+                            self._market_service.database.funding_rates.get(
+                                instrument.symbol,
+                                self._config.max_list_len
+                            ),
+                            self._market_service.database.cvds.get(
+                                instrument.symbol,
+                                self._config.max_list_len
+                            )
+                        )
 
-            logger.info(f"Instrument removed: {symbol}")
+                        coin.extend_klines(klines)
+                        coin.extend_open_interests(open_interests)
+                        coin.extend_funding_rates(funding_rates)
+                        coin.extend_cvds(cvds)
 
-        # Проверка для записи в память
-        current_actual_symbols = set(self._actual_symbols)
-        actual_symbols = {symbol for symbol, coin in coins.items() if self._coin_validator.validate(coin)}
-
-        for symbol in actual_symbols - current_actual_symbols:
-            self._actual_symbols.add(symbol)
-
-            await self._update_coin_history(symbol)
-
-            coin = self._coins.get(symbol)
-            if coin:
-                await self._market_service.writer.flush(symbol)
-
-                klines, open_interests, funding_rates, cvds = await asyncio.gather(
-                    self._market_service.database.klines.get(symbol, self._config.max_list_len),
-                    self._market_service.database.open_interests.get(symbol, self._config.max_list_len),
-                    self._market_service.database.funding_rates.get(symbol, self._config.max_list_len),
-                    self._market_service.database.cvds.get(symbol, self._config.max_list_len)
-                )
-
-                coin.extend_klines(klines)
-                coin.extend_open_interests(open_interests)
-                coin.extend_funding_rates(funding_rates)
-                coin.extend_cvds(cvds)
-
-        for symbol in current_actual_symbols - actual_symbols:
-            if symbol in self._actual_symbols:
-                self._actual_symbols.remove(symbol)
-
-            # Удаление данных из памяти
-            coin = self._coins.get(symbol)
-            if coin:
-                coin.clear()
+                    coin.is_actual = is_actual
 
         logger.info("All instruments updated")
-
-        del coins
 
     async def _update_coin_history(self, symbol: str) -> None:
         coin = self._coins.get(symbol)
@@ -412,16 +414,16 @@ class TradingEngine(object):
             return None
 
         for trade in data:
-            timestamp = datetime.fromtimestamp(int(trade.get("T")) / 1000, timezone.utc)
-
-            state = self._get_or_create_state(symbol, timestamp)
+            state = self._get_state(symbol)
+            if not state:
+                state = self._create_state(symbol)
 
             size = Decimal(trade.get("v"))
 
             if trade.get("S") == OrderSide.BUY.value:
-                state.cvd_delta += size
+                state.last_cvd_value += size
             else:
-                state.cvd_delta -= size
+                state.last_cvd_value -= size
 
             state.trade_count += 1
 
@@ -438,12 +440,11 @@ class TradingEngine(object):
 
         timestamp = datetime.fromtimestamp(int(msg.get("ts")) / 1000, timezone.utc)
 
-        ticker = Ticker(
-            timestamp=timestamp,
-            **data
-        )
+        ticker = Ticker.from_api(data, timestamp)
 
-        state = self._get_or_create_state(symbol, timestamp)
+        state = self._get_state(symbol)
+        if not state:
+            state = self._create_state(symbol)
 
         state.last_ticker = ticker
 
@@ -476,9 +477,11 @@ class TradingEngine(object):
         )
 
         if data.get("confirm"):
-            state = self._get_or_create_state(symbol, kline.timestamp)
-            if state:
-                state.last_kline = kline
+            state = self._get_state(symbol)
+            if not state:
+                state = self._create_state(symbol)
+
+            state.last_kline = kline
 
             self._close_period(symbol)
 
@@ -545,14 +548,11 @@ class TradingEngine(object):
         await self._market_service.start()
 
         self._coins = await self._get_coins(symbols)
-        self._actual_symbols = {symbol for symbol, coin in self._coins.items() if self._coin_validator.validate(coin)}
-
-        for symbol in self._coins.keys():
-            self._last_cvds[symbol] = Decimal(0)
 
         symbols_to_subscribe = list(self._coins)
         if not symbols_to_subscribe:
             logger.warning("No symbols to subscribe")
+            await self._market_service.stop()
             return None
 
         self._loop = asyncio.get_running_loop()
@@ -561,7 +561,7 @@ class TradingEngine(object):
         logger.info(
             f"Starting market stream: "
             f"{len(symbols_to_subscribe)} symbols, "
-            f"{len(self._actual_symbols)} actual symbols, "
+            f"{sum([coin.is_actual for coin in self._coins.values()])} actual symbols, "
             f"interval={self._config.interval.value}m, "
             f"chunk={self._config.max_subscribe_size}"
         )
@@ -581,13 +581,14 @@ class TradingEngine(object):
             name="instruments-updater-worker"
         )
 
+        actual_symbols = set([coin.instrument.symbol for coin in self._coins.values() if coin.is_actual])
         for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
             chunk = symbols_to_subscribe[start:start + self._config.max_subscribe_size]
 
             logger.info(f"Downloads coins history data #{len(self._ws_connections) + 1}...")
 
             await asyncio.gather(
-                *[self._update_coin_history(symbol) for symbol in chunk if symbol in self._actual_symbols]
+                *[self._update_coin_history(symbol) for symbol in chunk if symbol in actual_symbols]
             )
 
             ws = self._create_connection(chunk)

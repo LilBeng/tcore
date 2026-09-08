@@ -1,58 +1,77 @@
+from dataclasses import dataclass
 from decimal import Decimal
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from tcore.models.enums import InstrumentStatus
 
 
-class LeverageFilter(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    min_leverage: Decimal = Field(alias="minLeverage")
-    max_leverage: Decimal = Field(alias="maxLeverage")
-    leverage_step: Decimal = Field(alias="leverageStep")
-
-
-class LotSizeFilter(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    min_qty: Decimal = Field(alias="minOrderQty")
-    max_qty: Decimal = Field(alias="maxOrderQty")
-    qty_step: Decimal = Field(alias="qtyStep")
+@dataclass(slots=True)
+class LeverageFilter:
+    min_leverage: Decimal
+    max_leverage: Decimal
+    leverage_step: Decimal
 
 
-class PriceFilter(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    min_price: Decimal = Field(alias="minPrice")
-    max_price: Decimal = Field(alias="maxPrice")
-    tick_size: Decimal = Field(alias="tickSize")
-
-
-class RiskParameters(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    ratio_x: Decimal = Field(alias="priceLimitRatioX")  # <0.15 норма
-    ratio_y: Decimal = Field(alias="priceLimitRatioY")  # <0.3 норма
+@dataclass(slots=True)
+class LotSizeFilter:
+    min_qty: Decimal
+    max_qty: Decimal
+    qty_step: Decimal
 
 
-class Instrument(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-        str_strip_whitespace=True,
-        validate_assignment=True,
-        extra='ignore',
-        frozen=False
-    )
+@dataclass(slots=True)
+class PriceFilter:
+    min_price: Decimal
+    max_price: Decimal
+    tick_size: Decimal
 
-    symbol: str = Field(alias="symbol")  # Торговый символ
-    status: InstrumentStatus  # Статус: Trading, Settling, Closed
-    base_coin: str = Field(alias="baseCoin")  # Базовая монета
-    quote_coin: str = Field(alias="quoteCoin")  # Котируемая монета
-    leverage_filter: LeverageFilter = Field(alias="leverageFilter")  # Фильтр плеча (мин/макс)
-    lot_size_filter: LotSizeFilter = Field(alias="lotSizeFilter")  # Фильтр размера лота
-    price_filter: PriceFilter = Field(alias="priceFilter")  # Фильтр цены (мин/макс/шаг)
-    funding_interval: int = Field(default=480, alias="fundingInterval")  # Интервал финансирования в минутах (480 = 8ч)
-    upper_funding_rate: Decimal = Field(alias="upperFundingRate")  # Верхний лимит ставки финансирования
-    lower_funding_rate: Decimal = Field(alias="lowerFundingRate")  # Нижний лимит ставки финансирования
-    risk_parameters: RiskParameters = Field(alias="riskParameters")  # Параметры риска (лимиты цен)
+
+@dataclass(slots=True)
+class RiskParameters:
+    ratio_x: Decimal
+    ratio_y: Decimal
+
+
+@dataclass(slots=True)
+class Instrument:
+    symbol: str
+    status: InstrumentStatus
+    base_coin: str
+    quote_coin: str
+    leverage_filter: LeverageFilter
+    lot_size_filter: LotSizeFilter
+    price_filter: PriceFilter
+    funding_interval: int
+    upper_funding_rate: Decimal
+    lower_funding_rate: Decimal
+    risk_parameters: RiskParameters
+
+    @classmethod
+    def from_api(cls, data: dict) -> "Instrument":
+        return cls(
+            symbol=data["symbol"],
+            status=InstrumentStatus(data["status"]),
+            base_coin=data["baseCoin"],
+            quote_coin=data["quoteCoin"],
+            leverage_filter=LeverageFilter(
+                min_leverage=Decimal(data["leverageFilter"]["minLeverage"]),
+                max_leverage=Decimal(data["leverageFilter"]["maxLeverage"]),
+                leverage_step=Decimal(data["leverageFilter"]["leverageStep"])
+            ),
+            lot_size_filter=LotSizeFilter(
+                min_qty=Decimal(data["lotSizeFilter"]["minOrderQty"]),
+                max_qty=Decimal(data["lotSizeFilter"]["maxOrderQty"]),
+                qty_step=Decimal(data["lotSizeFilter"]["qtyStep"])
+            ),
+            price_filter=PriceFilter(
+                min_price=Decimal(data["priceFilter"]["minPrice"]),
+                max_price=Decimal(data["priceFilter"]["maxPrice"]),
+                tick_size=Decimal(data["priceFilter"]["tickSize"])
+            ),
+            funding_interval=int(data.get("fundingInterval", 480)),
+            upper_funding_rate=Decimal(data["upperFundingRate"]),
+            lower_funding_rate=Decimal(data["lowerFundingRate"]),
+            risk_parameters=RiskParameters(
+                ratio_x=Decimal(data["riskParameters"]["priceLimitRatioX"]),
+                ratio_y=Decimal(data["riskParameters"]["priceLimitRatioY"])
+            )
+        )

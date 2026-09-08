@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -9,8 +8,15 @@ from tcore.models.tick import Ticker
 
 @dataclass(slots=True)
 class PeriodState:
-    period_start: datetime
+    last_cvd_value: Decimal = Decimal(0)
     last_kline: Optional[Kline] = None
     last_ticker: Optional[Ticker] = None
-    cvd_delta: Decimal = Decimal(0)
     trade_count: int = 0
+
+    def reset(self, reset_cvd: bool = False) -> None:
+        if reset_cvd:
+            self.last_cvd_value = Decimal(0)
+
+        self.last_kline = None
+        self.last_ticker = None
+        self.trade_count = 0

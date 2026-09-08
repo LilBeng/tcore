@@ -7,4 +7,3 @@ from decimal import Decimal
 class CVD:
     timestamp: datetime
     value: Decimal
-    delta: Decimal

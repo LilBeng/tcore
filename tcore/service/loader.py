@@ -75,7 +75,7 @@ class HistoryDataLoader(object):
             if not resp:
                 break
 
-            batch = [Instrument(**item) for item in resp['result']['list']]
+            batch = [Instrument.from_api(item) for item in resp['result']['list']]
             instruments.extend(batch)
 
             logger.debug(
@@ -111,7 +111,7 @@ class HistoryDataLoader(object):
         if not resp:
             return []
 
-        return [Ticker(**item) for item in resp['result']['list']]
+        return [Ticker.from_api(item) for item in resp['result']['list']]
 
     async def load_klines(
             self,

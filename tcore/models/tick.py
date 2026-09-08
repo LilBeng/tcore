@@ -1,42 +1,50 @@
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+@dataclass(slots=True)
+class Ticker:
+    timestamp: datetime
+    symbol: str
 
-class Ticker(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    last_price: Decimal
+    index_price: Decimal
+    mark_price: Decimal
+    prev_price_24h: Decimal
+    price_24h_pcnt: Decimal
+    high_price_24h: Decimal
+    low_price_24h: Decimal
+    prev_price_1h: Decimal
 
-    timestamp: datetime = Field(default_factory=datetime.now)
-    symbol: str = Field(alias="symbol")
+    volume_24h: Decimal
+    turnover_24h: Decimal
 
-    # Ценовые поля
-    last_price: Decimal = Field(alias="lastPrice")
-    index_price: Decimal = Field(alias="indexPrice")
-    mark_price: Decimal = Field(alias="markPrice")
-    prev_price_24h: Decimal = Field(alias="prevPrice24h")
-    price_24h_pcnt: Decimal = Field(alias="price24hPcnt")
-    high_price_24h: Decimal = Field(alias="highPrice24h")
-    low_price_24h: Decimal = Field(alias="lowPrice24h")
-    prev_price_1h: Decimal = Field(alias="prevPrice1h")
+    open_interest: Decimal
+    open_interest_value: Decimal
+    single_open_interest: Decimal
+    single_open_interest_value: Decimal
 
-    # Объёмы и обороты
-    volume_24h: Decimal = Field(alias="volume24h")
-    turnover_24h: Decimal = Field(alias="turnover24h")
+    funding_rate: Decimal
 
-    # Открытый интерес
-    open_interest: Decimal = Field(alias="openInterest")
-    open_interest_value: Decimal = Field(alias="openInterestValue")
-
-    single_open_interest: Decimal = Field(alias="singleOpenInterest")
-    single_open_interest_value: Decimal = Field(alias="singleOpenInterestValue")
-
-    # Ставка финансирования
-    funding_rate: Decimal = Field(alias="fundingRate")
-
-    @model_validator(mode='before')
     @classmethod
-    def handle_empty_strings(cls, values):
-        if isinstance(values, dict) and values.get('fundingRate') == '':
-            values['fundingRate'] = '0'
-        return values
+    def from_api(cls, data: dict, timestamp: datetime = datetime.now(timezone.utc)) -> "Ticker":
+        return cls(
+            timestamp=timestamp,
+            symbol=data["symbol"],
+            last_price=Decimal(data["lastPrice"]),
+            index_price=Decimal(data["indexPrice"]),
+            mark_price=Decimal(data["markPrice"]),
+            prev_price_24h=Decimal(data["prevPrice24h"]),
+            price_24h_pcnt=Decimal(data["price24hPcnt"]),
+            high_price_24h=Decimal(data["highPrice24h"]),
+            low_price_24h=Decimal(data["lowPrice24h"]),
+            prev_price_1h=Decimal(data["prevPrice1h"]),
+            volume_24h=Decimal(data["volume24h"]),
+            turnover_24h=Decimal(data["turnover24h"]),
+            open_interest=Decimal(data["openInterest"]),
+            open_interest_value=Decimal(data["openInterestValue"]),
+            single_open_interest=Decimal(data["singleOpenInterest"]),
+            single_open_interest_value=Decimal(data["singleOpenInterestValue"]),
+            funding_rate=Decimal(data["fundingRate"] or "0")
+        )

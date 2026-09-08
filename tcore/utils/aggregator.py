@@ -59,8 +59,7 @@ class DataAggregator(object):
             result.append(
                 CVD(
                     timestamp=timestamp,
-                    value=items[-1].value,
-                    delta=sum((item.delta for item in items), Decimal(0))
+                    value=items[-1].value
                 )
             )
 

@@ -1,7 +1,7 @@
 from bisect import bisect_left
 from dataclasses import field, dataclass
 from operator import attrgetter
-from typing import Union
+from typing import Union, TypeAlias
 
 from tcore.models.cvd import CVD
 from tcore.models.funding import FundingRate
@@ -10,7 +10,7 @@ from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
 from tcore.models.tick import Ticker
 
-Data = Union[Kline, OpenInterest, FundingRate, CVD]
+Data: TypeAlias = Union[Kline, OpenInterest, FundingRate, CVD]
 
 
 @dataclass(slots=True)
@@ -22,6 +22,7 @@ class Coin:
     funding_rates: list[FundingRate] = field(default_factory=list)
     cvds: list[CVD] = field(default_factory=list)
     max_len: int = 25_000
+    is_actual: bool = True
 
     def set_max_len(self, max_len: int) -> None:
         self.max_len = max_len
@@ -99,3 +100,13 @@ class Coin:
             values[item.timestamp] = item
 
         return sorted(values.values(), key=attrgetter("timestamp"))
+
+
+@dataclass(slots=True)
+class CoinSnapshot:
+    symbol: str
+    ticker: Ticker
+    klines: list[Kline]
+    open_interests: list[OpenInterest]
+    funding_rates: list[FundingRate]
+    cvds: list[CVD]

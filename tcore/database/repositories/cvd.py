@@ -15,16 +15,14 @@ class CVDRepository(BaseRepository[CVDDB, CVD]):
     def _to_entity(self, model: CVDDB) -> CVD:
         return CVD(
             timestamp=model.timestamp,
-            value=model.value,
-            delta=model.delta
+            value=model.value
         )
 
     def _to_values(self, symbol: str, entity: CVD) -> dict:
         return {
             "symbol": symbol,
             "timestamp": entity.timestamp,
-            "value": entity.value,
-            "delta": entity.delta
+            "value": entity.value
         }
 
     async def get_periods(self, symbol: str, interval: MarketInterval, limit: Optional[int] = None) -> list[CVD]:
@@ -69,8 +67,7 @@ class CVDRepository(BaseRepository[CVDDB, CVD]):
         return [
             CVD(
                 timestamp=datetime.fromtimestamp(row.period / 1000, timezone.utc),
-                value=row.value,
-                delta=row.delta
+                value=row.value
             )
             for row in rows
         ]
