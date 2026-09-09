@@ -43,15 +43,15 @@ class TradingEngine(object):
             flush_interval=self._config.flush_interval
         )
 
-        self._session = Session(
-            pool_connections=self._config.pool_connections,
-            pool_maxsize=self._config.pool_maxsize,
-            max_retries=self._config.max_retries,
-            backoff_factor=self._config.backoff_factor,
-            testnet=self._config.test_net
+        self._history_data_loader = HistoryDataLoader(
+            Session(
+                pool_connections=self._config.pool_connections,
+                pool_maxsize=self._config.pool_maxsize,
+                max_retries=self._config.max_retries,
+                backoff_factor=self._config.backoff_factor,
+                testnet=self._config.test_net
+            )
         )
-
-        self._loader = HistoryDataLoader(self._session)
 
         # Queues
         self._market_queue: asyncio.Queue[Optional[tuple[EventType, dict]]] = asyncio.Queue()
@@ -62,11 +62,13 @@ class TradingEngine(object):
         self._strategy_executor_task: Optional[asyncio.Task] = None
         self._instruments_updater_task: Optional[asyncio.Task] = None
 
+        # Executor
         self._strategy_executor: Optional[ThreadPoolExecutor] = None
 
         # Event loop
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
+        # Flag
         self._running = False
 
     @property
@@ -283,8 +285,12 @@ class TradingEngine(object):
 
         if symbols:
             instruments, tickers = await asyncio.gather(
-                asyncio.gather(*(self._loader.load_instruments(self._config.category, symbol) for symbol in symbols)),
-                asyncio.gather(*(self._loader.load_tickers(self._config.category, symbol) for symbol in symbols))
+                asyncio.gather(
+                    *(self._history_data_loader.load_instruments(self._config.category, symbol) for symbol in symbols)
+                ),
+                asyncio.gather(
+                    *(self._history_data_loader.load_tickers(self._config.category, symbol) for symbol in symbols)
+                )
             )
 
             instruments = [instrument for batch in instruments for instrument in batch]
@@ -292,8 +298,8 @@ class TradingEngine(object):
 
         else:
             instruments, tickers = await asyncio.gather(
-                self._loader.load_instruments(self._config.category),
-                self._loader.load_tickers(self._config.category)
+                self._history_data_loader.load_instruments(self._config.category),
+                self._history_data_loader.load_tickers(self._config.category)
             )
 
         instruments = {instrument.symbol: instrument for instrument in instruments}
@@ -313,12 +319,12 @@ class TradingEngine(object):
     async def _update_instruments(self, symbols: Optional[list] = None) -> None:
         if symbols:
             instruments = await asyncio.gather(
-                *[self._loader.load_instruments(self._config.category, symbol) for symbol in symbols]
+                *[self._history_data_loader.load_instruments(self._config.category, symbol) for symbol in symbols]
             )
 
             instruments = [instrument for batch in instruments for instrument in batch]
         else:
-            instruments = await self._loader.load_instruments(self._config.category)
+            instruments = await self._history_data_loader.load_instruments(self._config.category)
 
         # Удаления монет, которых больше нет на бирже
         actual_symbols = set([instrument.symbol for instrument in instruments])
@@ -335,7 +341,7 @@ class TradingEngine(object):
                 coin.update_instrument(instrument)
             else:
                 # Если новый инструмент - добавляем монету
-                tickers = await self._loader.load_tickers(self._config.category, instrument.symbol)
+                tickers = await self._history_data_loader.load_tickers(self._config.category, instrument.symbol)
                 if tickers:
                     self._coins[instrument.symbol] = Coin(instrument, *tickers)
 
@@ -389,12 +395,12 @@ class TradingEngine(object):
         if self._config.interval.oi_interval:
             klines, open_interests = await asyncio.gather(
                 *[
-                    self._loader.load_klines(
+                    self._history_data_loader.load_klines(
                         symbol,
                         self._config.interval.kline_interval,
                         self._config.klines_history_limit
                     ),
-                    self._loader.load_open_interest(
+                    self._history_data_loader.load_open_interest(
                         symbol,
                         self._config.interval.oi_interval,
                         self._config.oi_history_limit
@@ -406,7 +412,7 @@ class TradingEngine(object):
             coin.extend_open_interests(open_interests)
 
         else:
-            klines = await self._loader.load_klines(
+            klines = await self._history_data_loader.load_klines(
                 symbol,
                 self._config.interval.kline_interval,
                 self._config.klines_history_limit
