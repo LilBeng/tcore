@@ -1,7 +1,7 @@
 from bisect import bisect_left
 from dataclasses import field, dataclass
 from operator import attrgetter
-from typing import Union, TypeAlias
+from typing import Union, TypeAlias, Self
 
 from tcore.models.cvd import CVD
 from tcore.models.funding import FundingRate
@@ -110,3 +110,14 @@ class CoinSnapshot:
     open_interests: list[OpenInterest]
     funding_rates: list[FundingRate]
     cvds: list[CVD]
+
+    @classmethod
+    def from_coin(cls, coin: Coin) -> Self:
+        return cls(
+            symbol=coin.instrument.symbol,
+            ticker=coin.ticker,
+            klines=coin.klines.copy(),
+            open_interests=coin.open_interests.copy(),
+            funding_rates=coin.funding_rates.copy(),
+            cvds=coin.cvds.copy()
+        )

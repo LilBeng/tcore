@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from tcore.models.coin import Coin
+from tcore.models.coin import Coin, CoinSnapshot
 
 
 class BaseStrategy(ABC):
@@ -10,5 +10,5 @@ class BaseStrategy(ABC):
         return cls.__name__
 
     @abstractmethod
-    def check(self, coin: Coin) -> bool:
+    def execute(self, snapshot: CoinSnapshot) -> bool:
         ...

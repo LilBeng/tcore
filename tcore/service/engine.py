@@ -1,15 +1,14 @@
 import asyncio
 import logging
 from collections import defaultdict
+from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional, Any
 
-from pybit.unified_trading import WebSocket, HTTP
-from requests.adapters import HTTPAdapter
-from urllib3 import Retry
+from pybit.unified_trading import WebSocket
 
-from tcore.models.coin import Coin
+from tcore.models.coin import Coin, CoinSnapshot
 from tcore.models.config import EngineConfig
 from tcore.models.cvd import CVD
 from tcore.models.enums import OrderSide, EventType
@@ -20,6 +19,7 @@ from tcore.models.state import PeriodState
 from tcore.models.tick import Ticker
 from tcore.service.database import MarketDataService
 from tcore.service.loader import HistoryDataLoader
+from tcore.utils.session import Session
 from tcore.utils.strategy import BaseStrategy
 from tcore.utils.validator import CoinValidator
 
@@ -33,6 +33,8 @@ class TradingEngine(object):
         self._strategies = strategies
 
         self._coins: dict[str, Coin] = {}
+        self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
+        self._states: dict[str, PeriodState] = {}
 
         self._market_service = MarketDataService(
             url=self._config.url_datetime,
@@ -41,35 +43,26 @@ class TradingEngine(object):
             flush_interval=self._config.flush_interval
         )
 
-        self._session = HTTP(
+        self._session = Session(
+            pool_connections=self._config.pool_connections,
+            pool_maxsize=self._config.pool_maxsize,
+            max_retries=self._config.max_retries,
+            backoff_factor=self._config.backoff_factor,
             testnet=self._config.test_net
         )
 
-        adapter = HTTPAdapter(
-            pool_connections=self._config.pool_connections,
-            pool_maxsize=self._config.pool_maxsize,
-            max_retries=Retry(
-                total=self._config.max_retries,
-                backoff_factor=self._config.backoff_factor
-            )
-        )
-
-        self._session.client.mount("://", adapter)
-
         self._loader = HistoryDataLoader(self._session)
-
-        self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
-
-        self._states: dict[str, PeriodState] = {}
 
         # Queues
         self._market_queue: asyncio.Queue[Optional[tuple[EventType, dict]]] = asyncio.Queue()
-        self._strategies_queue: asyncio.Queue[Optional[BaseStrategy]] = asyncio.Queue()
+        self._strategies_queue: asyncio.Queue[Optional[list[BaseStrategy]]] = asyncio.Queue()
 
         # Workers
         self._market_data_task: Optional[asyncio.Task] = None
         self._strategy_executor_task: Optional[asyncio.Task] = None
         self._instruments_updater_task: Optional[asyncio.Task] = None
+
+        self._strategy_executor: Optional[ThreadPoolExecutor] = None
 
         # Event loop
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -80,6 +73,10 @@ class TradingEngine(object):
     def is_running(self) -> bool:
         return self._running
 
+    @staticmethod
+    def _execute_strategy(strategy: BaseStrategy, snapshot: CoinSnapshot) -> tuple[BaseStrategy, CoinSnapshot, bool]:
+        return strategy, snapshot, strategy.execute(snapshot)
+
     def _enqueue(self, queue: asyncio.Queue, *items: Any) -> None:
         if self._loop is None or self._loop.is_closed():
             return None
@@ -87,28 +84,27 @@ class TradingEngine(object):
         if not items:
             return None
 
-        payload = items[0] if len(items) == 1 else items
-
         try:
-            self._loop.call_soon_threadsafe(queue.put_nowait, payload)
+            self._loop.call_soon_threadsafe(queue.put_nowait, items[0] if len(items) == 1 else items)
         except RuntimeError:
             pass
 
-    def _get_state(self, symbol: str) -> Optional[PeriodState]:
-        state = self._states.get(symbol)
-        if not state:
-            logger.warning(f"State for symbol={symbol} not found")
-        return state
+    def _open_trade(self, strategy: BaseStrategy, snapshot: CoinSnapshot) -> None:
+        ...
+
+    def _close_trade(self, /) -> None:
+        ...
 
     def _create_state(self, symbol: str, cvd_value: Decimal = Decimal(0)) -> PeriodState:
-        state = PeriodState(last_cvd_value=cvd_value)
+        if symbol in self._states:
+            logger.warning(f"State for {symbol} already exists")
 
-        self._states[symbol] = state
+        self._states[symbol] = PeriodState(last_cvd_value=cvd_value)
 
-        return state
+        return self._states[symbol]
 
     def _close_period(self, symbol: str) -> None:
-        state = self._get_state(symbol)
+        state = self._states.get(symbol)
         if state is None:
             return None
 
@@ -156,8 +152,10 @@ class TradingEngine(object):
 
         state.reset()
 
-        for strategy in self._strategies:
-            self._enqueue(self._strategies_queue, strategy)
+        self._enqueue(
+            self._strategies_queue,
+            self._strategies.copy()
+        )
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self._market_service.writer.add(symbol, kline)
@@ -242,16 +240,40 @@ class TradingEngine(object):
     async def _worker_strategy_executor(self) -> None:
         logger.info("Strategy executor worker started")
 
+        loop = asyncio.get_running_loop()
+
         while True:
-            strategy = await self._strategies_queue.get()
+            strategies = await self._strategies_queue.get()
 
             try:
-                # None is our shutdown signal.
-                if strategy is None:
+                if strategies is None:
                     return None
 
+                snapshots = [
+                    CoinSnapshot.from_coin(coin)
+                    for coin in self._coins.values()
+                    if coin.is_actual
+                ]
+
+                futures = [
+                    loop.run_in_executor(
+                        self._strategy_executor,
+                        self._execute_strategy,
+                        strategy,
+                        snapshot
+                    )
+                    for strategy in strategies
+                    for snapshot in snapshots
+                ]
+
+                results = await asyncio.gather(*futures)
+
+                for strategy, snapshot, result in results:
+                    if result:
+                        self._open_trade(strategy, snapshot)
+
             except Exception as exception:
-                logger.exception(f"Strategy event processing error: {exception}")
+                logger.exception(f"Strategy execution error: {exception}")
 
             finally:
                 self._strategies_queue.task_done()
@@ -416,7 +438,7 @@ class TradingEngine(object):
             return None
 
         for trade in data:
-            state = self._get_state(symbol)
+            state = self._states.get(symbol)
             if not state:
                 state = self._create_state(symbol)
 
@@ -444,7 +466,7 @@ class TradingEngine(object):
 
         ticker = Ticker.from_api(data, timestamp)
 
-        state = self._get_state(symbol)
+        state = self._states.get(symbol)
         if not state:
             state = self._create_state(symbol)
 
@@ -479,7 +501,7 @@ class TradingEngine(object):
         )
 
         if data.get("confirm"):
-            state = self._get_state(symbol)
+            state = self._states.get(symbol)
             if not state:
                 state = self._create_state(symbol)
 
@@ -583,6 +605,11 @@ class TradingEngine(object):
             name="instruments-updater-worker"
         )
 
+        self._strategy_executor = ThreadPoolExecutor(
+            max_workers=self._config.strategy_workers,
+            thread_name_prefix="strategy-executor"
+        )
+
         actual_symbols = set([coin.instrument.symbol for coin in self._coins.values() if coin.is_actual])
         for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
             chunk = symbols_to_subscribe[start:start + self._config.max_subscribe_size]
@@ -630,6 +657,10 @@ class TradingEngine(object):
             await self._strategies_queue.put(None)
             await self._strategy_executor_task
             self._strategy_executor_task = None
+
+        if self._strategy_executor:
+            self._strategy_executor.shutdown(wait=True)
+            self._strategy_executor = None
 
         if self._instruments_updater_task:
             self._instruments_updater_task.cancel()

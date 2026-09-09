@@ -9,6 +9,7 @@ from tcore.models.enums import Category, MarketInterval
 class EngineConfig(object):
     # Update
     instruments_update_timedelta: timedelta
+    strategy_workers: int
 
     # MarketDataDB
     database_folder_path: str
