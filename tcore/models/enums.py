@@ -58,6 +58,7 @@ class MarketInterval(int, Enum):
     H4 = 240  # 4 часа
     H6 = 360  # 6 часов
     H12 = 720  # 12 часов
+    H24 = 1440  # 24 часа
 
     @property
     def kline_interval(self) -> KlineInterval:

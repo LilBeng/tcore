@@ -154,10 +154,7 @@ class TradingEngine(object):
 
         state.reset()
 
-        self._enqueue(
-            self._strategies_queue,
-            self._strategies.copy()
-        )
+        self._enqueue(self._strategies_queue, self._strategies.copy())
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self._market_service.writer.add(symbol, kline)
@@ -251,19 +248,10 @@ class TradingEngine(object):
                 if strategies is None:
                     return None
 
-                snapshots = [
-                    CoinSnapshot.from_coin(coin)
-                    for coin in self._coins.values()
-                    if coin.is_actual
-                ]
+                snapshots = [CoinSnapshot.from_coin(coin) for coin in self._coins.values() if coin.is_actual]
 
                 futures = [
-                    loop.run_in_executor(
-                        self._strategy_executor,
-                        self._execute_strategy,
-                        strategy,
-                        snapshot
-                    )
+                    loop.run_in_executor(self._strategy_executor, self._execute_strategy, strategy, snapshot)
                     for strategy in strategies
                     for snapshot in snapshots
                 ]
@@ -309,7 +297,7 @@ class TradingEngine(object):
             ticker = tickers.get(key)
 
             if ticker:
-                coins[instrument.symbol] = Coin(instrument, ticker, max_len=self._config.max_list_len)
+                coins[instrument.symbol] = Coin(instrument, ticker, max_len=self._config.max_length)
                 coins[instrument.symbol].is_actual = self._coin_validator.validate(coins[instrument.symbol])
             else:
                 logger.warning(f"No ticker (symbol={key}) to subscribe")
@@ -364,19 +352,19 @@ class TradingEngine(object):
                         klines, open_interests, funding_rates, cvds = await asyncio.gather(
                             self._market_service.database.klines.get(
                                 instrument.symbol,
-                                self._config.max_list_len
+                                self._config.max_length
                             ),
                             self._market_service.database.open_interests.get(
                                 instrument.symbol,
-                                self._config.max_list_len
+                                self._config.max_length
                             ),
                             self._market_service.database.funding_rates.get(
                                 instrument.symbol,
-                                self._config.max_list_len
+                                self._config.max_length
                             ),
                             self._market_service.database.cvds.get(
                                 instrument.symbol,
-                                self._config.max_list_len
+                                self._config.max_length
                             )
                         )
 

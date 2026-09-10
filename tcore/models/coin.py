@@ -1,7 +1,8 @@
 from bisect import bisect_left
 from dataclasses import field, dataclass
+from datetime import datetime
 from operator import attrgetter
-from typing import Union, TypeAlias, Self
+from typing import Union, TypeAlias, Self, Optional
 
 from tcore.models.cvd import CVD
 from tcore.models.funding import FundingRate
@@ -121,3 +122,15 @@ class CoinSnapshot:
             funding_rates=coin.funding_rates.copy(),
             cvds=coin.cvds.copy()
         )
+
+    @property
+    def timestamp(self) -> Optional[datetime]:
+        if not all((self.klines, self.open_interests, self.funding_rates, self.cvds)):
+            return None
+
+        last = [lst[-1] for lst in (self.klines, self.open_interests, self.funding_rates, self.cvds)]
+
+        if None in last:
+            return None
+
+        return max(x.timestamp for x in last)

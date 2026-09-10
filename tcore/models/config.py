@@ -32,7 +32,7 @@ class EngineConfig(object):
     max_retries: int = 3
 
     # Memory
-    max_list_len: int = 25_000
+    max_length: int = 25_000
 
     def __post_init__(self) -> None:
         os.makedirs(os.path.dirname(self.database_folder_path), exist_ok=True)
