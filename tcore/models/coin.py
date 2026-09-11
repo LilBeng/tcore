@@ -137,14 +137,12 @@ class CoinSnapshot:
         return last
         
     @property
-    def timestamp(self) -> Optional[datetime]:
-        last = self._get_last_values()
-        if last:
+    def close_timestamp(self) -> Optional[datetime]:
+        if last := self._get_last_values:
             return max(x.timestamp for x in last)
     
     def validate(self, interval: MarketInterval) -> bool:
-        last = self._get_last_values()
-        if last:
+        if last := self._get_last_values:
             delta = max(x.timestamp for x in last) - min(x.timestamp for x in last)
             return delta == timedelda(minutes=interval.value)
             
