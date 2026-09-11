@@ -1,4 +1,4 @@
-from enum import Enum, auto
+from enum import Enum
 from typing import Optional
 
 
@@ -110,6 +110,14 @@ class MarketInterval(int, Enum):
 
 
 class EventType(Enum):
-    KLINE = auto()
-    TRADE = auto()
-    TICKER = auto()
+    KLINE = 0
+    TRADE = 1
+    TICKER = 2
+
+
+class DataType(int, Enum):
+    KLINE = 0
+    OPEN_INTEREST = 1
+    FUNDING_RATE = 2
+    CVD = 3
+

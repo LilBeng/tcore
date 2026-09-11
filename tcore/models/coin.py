@@ -1,16 +1,17 @@
 from bisect import bisect_left
 from dataclasses import field, dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from operator import attrgetter
 from typing import Union, TypeAlias, Self, Optional
 
 from tcore.models.cvd import CVD
-from tcore.models.enums import MarketInterval
+from tcore.models.enums import DataType, MarketInterval
 from tcore.models.funding import FundingRate
 from tcore.models.instrument import Instrument
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
 from tcore.models.tick import Ticker
+from tcore.utils.aggregator import DataAggregator
 
 Data: TypeAlias = Union[Kline, OpenInterest, FundingRate, CVD]
 
@@ -123,26 +124,29 @@ class CoinSnapshot:
             funding_rates=coin.funding_rates.copy(),
             cvds=coin.cvds.copy()
         )
-    
-    @property
-    def _get_last_values(self) -> Optional[list[Data]]:
-        if not all((self.klines, self.open_interests, self.funding_rates, self.cvds)):
+
+    @staticmethod
+    def _get_last_timestamp(array: list[Data]) -> Optional[datetime]:
+        if not array:
             return None
 
-        last = [lst[-1] for lst in (self.klines, self.open_interests, self.funding_rates, self.cvds)]
-        if None in last:
-            return None
-        
-        return last
-        
-    @property
-    def close_timestamp(self) -> Optional[datetime]:
-        if last := self._get_last_values:
-            return max(x.timestamp for x in last)
+        if value := array[-1]:
+            return value.timestamp
+
+    def get_last_timestamp(self, data_type: DataType, interval: MarketInterval) -> Optional[datetime]:
+        match data_type:
+            case DataType.KLINE:
+                array = DataAggregator.klines(self.klines, interval)
+            case DataType.OPEN_INTEREST:
+                array = DataAggregator.open_interests(self.open_interests, interval)
+            case DataType.FUNDING_RATE:
+                array = DataAggregator.funding_rates(self.funding_rates, interval)
+            case DataType.CVD:
+                array = DataAggregator.cvds(self.cvds, interval)
+            case _:
+                return None
+
+        return self._get_last_timestamp(array)
     
-    def validate(self, interval: MarketInterval) -> bool:
-        if last := self._get_last_values:
-            delta = max(x.timestamp for x in last) - min(x.timestamp for x in last)
-            return delta == timedelda(minutes=interval.value)
-            
-        return False
+    def validate(self, timestamp: datetime, data_type: DataType, interval: MarketInterval) -> bool:
+        return self.get_last_timestamp(data_type, interval) == timestamp
