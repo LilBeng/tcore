@@ -1,10 +1,11 @@
 from bisect import bisect_left
 from dataclasses import field, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from operator import attrgetter
 from typing import Union, TypeAlias, Self, Optional
 
 from tcore.models.cvd import CVD
+from tcore.models.enums import MarketInyerval
 from tcore.models.funding import FundingRate
 from tcore.models.instrument import Instrument
 from tcore.models.kline import Kline
@@ -122,9 +123,9 @@ class CoinSnapshot:
             funding_rates=coin.funding_rates.copy(),
             cvds=coin.cvds.copy()
         )
-
+    
     @property
-    def timestamp(self) -> Optional[datetime]:
+    def _get_last_values(self) -> Optional[list[Data]]:
         if not all((self.klines, self.open_interests, self.funding_rates, self.cvds)):
             return None
 
@@ -132,5 +133,19 @@ class CoinSnapshot:
 
         if None in last:
             return None
-
-        return max(x.timestamp for x in last)
+        
+        return last
+        
+    @property
+    def timestamp(self) -> Optional[datetime]:
+        last = self._get_last_values()
+        if last:
+            return max(x.timestamp for x in last)
+    
+    def validate(self, interval: MarketInterval) -> bool:
+        last = self._get_last_values()
+        if last:
+            delta = max(x.timestamp for x in last) - min(x.timestamp for x in last)
+            return delta == timedelda(minutes=interval.value)
+            
+        return False
