@@ -130,7 +130,6 @@ class CoinSnapshot:
             return None
 
         last = [lst[-1] for lst in (self.klines, self.open_interests, self.funding_rates, self.cvds)]
-
         if None in last:
             return None
         
