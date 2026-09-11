@@ -5,7 +5,7 @@ from operator import attrgetter
 from typing import Union, TypeAlias, Self, Optional
 
 from tcore.models.cvd import CVD
-from tcore.models.enums import MarketInyerval
+from tcore.models.enums import MarketInterval
 from tcore.models.funding import FundingRate
 from tcore.models.instrument import Instrument
 from tcore.models.kline import Kline
