@@ -6,10 +6,10 @@ from urllib3 import Retry
 class Session(HTTP):
     def __init__(
             self,
-            pool_connections: int = 10,
-            pool_maxsize: int = 30,
-            max_retries: int = 3,
-            backoff_factor: float = 0.1,
+            pool_connections: int,
+            pool_maxsize: int,
+            max_retries: int,
+            backoff_factor: float,
             **args) -> None:
         super().__init__(**args)
 
@@ -22,4 +22,5 @@ class Session(HTTP):
             )
         )
 
-        self.client.mount("://", adapter)
+        self.client.mount("https://api.bybit.com", adapter)
+        self.client.mount("https://api-testnet.bybit.com", adapter)

@@ -121,3 +121,9 @@ class DataType(int, Enum):
     FUNDING_RATE = 2
     CVD = 3
 
+
+class SignalStatus(Enum):
+    TRACKING = 0
+    NOT_SUITABLE = 1
+    ENTRY = 2
+    WAITING = 3

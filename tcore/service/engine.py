@@ -11,7 +11,7 @@ from pybit.unified_trading import WebSocket
 from tcore.models.coin import Coin, CoinSnapshot
 from tcore.models.config import EngineConfig
 from tcore.models.cvd import CVD
-from tcore.models.enums import OrderSide, EventType
+from tcore.models.enums import OrderSide, EventType, SignalStatus
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
@@ -55,7 +55,7 @@ class TradingEngine(object):
 
         # Queues
         self._market_queue: asyncio.Queue[Optional[tuple[EventType, dict]]] = asyncio.Queue()
-        self._strategies_queue: asyncio.Queue[Optional[list[BaseStrategy]]] = asyncio.Queue()
+        self._snapshot_queue: asyncio.Queue[Optional[CoinSnapshot]] = asyncio.Queue()
 
         # Workers
         self._market_data_task: Optional[asyncio.Task] = None
@@ -76,7 +76,10 @@ class TradingEngine(object):
         return self._running
 
     @staticmethod
-    def _execute_strategy(strategy: BaseStrategy, snapshot: CoinSnapshot) -> tuple[BaseStrategy, CoinSnapshot, bool]:
+    def _execute_strategy(
+            strategy: BaseStrategy,
+            snapshot: CoinSnapshot
+    ) -> tuple[BaseStrategy, CoinSnapshot, SignalStatus]:
         return strategy, snapshot, strategy.execute(snapshot)
 
     def _enqueue(self, queue: asyncio.Queue, *items: Any) -> None:
@@ -91,11 +94,13 @@ class TradingEngine(object):
         except RuntimeError:
             pass
 
-    def _open_trade(self, strategy: BaseStrategy, snapshot: CoinSnapshot) -> None:
-        ...
+    def _open_trade(self, strategy: BaseStrategy, symbol: str) -> None:
+        if coin := self._coins.get(symbol):
+            coin.is_trade = True
 
-    def _close_trade(self, /) -> None:
-        ...
+    def _close_trade(self, symbol: str) -> None:
+        if coin := self._coins.get(symbol):
+            coin.is_trade = False
 
     def _create_state(self, symbol: str, cvd_value: Decimal = Decimal(0)) -> PeriodState:
         if symbol in self._states:
@@ -154,7 +159,9 @@ class TradingEngine(object):
 
         state.reset()
 
-        self._enqueue(self._strategies_queue, self._strategies.copy())
+        if coin := self._coins.get(symbol):
+            if coin.is_actual:
+                self._enqueue(self._snapshot_queue, CoinSnapshot.from_coin(coin))
 
     def _store_kline(self, symbol: str, kline: Kline) -> None:
         self._market_service.writer.add(symbol, kline)
@@ -242,31 +249,29 @@ class TradingEngine(object):
         loop = asyncio.get_running_loop()
 
         while True:
-            strategies = await self._strategies_queue.get()
+            snapshot = await self._snapshot_queue.get()
 
             try:
-                if strategies is None:
+                if snapshot is None:
                     return None
-
-                snapshots = [CoinSnapshot.from_coin(coin) for coin in self._coins.values() if coin.is_actual]
 
                 futures = [
                     loop.run_in_executor(self._strategy_executor, self._execute_strategy, strategy, snapshot)
-                    for strategy in strategies
-                    for snapshot in snapshots
+                    for strategy in self._strategies
                 ]
 
                 results = await asyncio.gather(*futures)
 
                 for strategy, snapshot, result in results:
-                    if result:
-                        self._open_trade(strategy, snapshot)
+                    logger.debug(f"[{snapshot.symbol}] Status: {result.name}")
+                    if result == SignalStatus.ENTRY:
+                        self._open_trade(strategy, snapshot.symbol)
 
             except Exception as exception:
                 logger.exception(f"Strategy execution error: {exception}")
 
             finally:
-                self._strategies_queue.task_done()
+                self._snapshot_queue.task_done()
 
     async def _get_coins(self, symbols: Optional[list] = None) -> dict[str, Coin]:
         coins = {}
@@ -645,10 +650,10 @@ class TradingEngine(object):
             await self._market_data_task
             self._market_data_task = None
 
-        await self._strategies_queue.join()
+        await self._snapshot_queue.join()
 
         if self._strategy_executor_task is not None:
-            await self._strategies_queue.put(None)
+            await self._snapshot_queue.put(None)
             await self._strategy_executor_task
             self._strategy_executor_task = None
 

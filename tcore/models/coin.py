@@ -26,6 +26,7 @@ class Coin:
     cvds: list[CVD] = field(default_factory=list)
     max_len: int = 25_000
     is_actual: bool = True
+    is_trade: bool = False
 
     def set_max_len(self, max_len: int) -> None:
         self.max_len = max_len
@@ -133,20 +134,22 @@ class CoinSnapshot:
         if value := array[-1]:
             return value.timestamp
 
-    def get_last_timestamp(self, data_type: DataType, interval: MarketInterval) -> Optional[datetime]:
+    def aggregate(self, data_type: DataType, interval: MarketInterval) -> list[Data]:
         match data_type:
             case DataType.KLINE:
-                array = DataAggregator.klines(self.klines, interval)
+                return DataAggregator.klines(self.klines, interval)
             case DataType.OPEN_INTEREST:
-                array = DataAggregator.open_interests(self.open_interests, interval)
+                return DataAggregator.open_interests(self.open_interests, interval)
             case DataType.FUNDING_RATE:
-                array = DataAggregator.funding_rates(self.funding_rates, interval)
+                return DataAggregator.funding_rates(self.funding_rates, interval)
             case DataType.CVD:
-                array = DataAggregator.cvds(self.cvds, interval)
-            case _:
-                return None
+                return DataAggregator.cvds(self.cvds, interval)
 
-        return self._get_last_timestamp(array)
+        return []
+
+    def get_last_timestamp(self, data_type: DataType, interval: MarketInterval) -> Optional[datetime]:
+        if array := self.aggregate(data_type, interval):
+            return self._get_last_timestamp(array)
     
     def validate(self, timestamp: datetime, data_type: DataType, interval: MarketInterval) -> bool:
         return self.get_last_timestamp(data_type, interval) == timestamp

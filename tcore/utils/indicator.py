@@ -274,16 +274,3 @@ def adx(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
         result = (result * (period - 1) + value) / period
 
     return result
-
-
-def roi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
-    if len(klines) < period:
-        return None
-
-    first = klines[-period].close
-    last = klines[-1].close
-
-    if first == 0:
-        return None
-
-    return (last - first) / first * 100
