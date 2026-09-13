@@ -122,8 +122,8 @@ class DataType(int, Enum):
     CVD = 3
 
 
-class SignalStatus(Enum):
-    TRACKING = 0
+class EventCode(Enum):
+    WAITING = 0
     NOT_SUITABLE = 1
-    ENTRY = 2
-    WAITING = 3
+    TRACKING = 2
+    ENTRY = 3

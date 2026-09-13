@@ -6,12 +6,13 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from typing import Optional, Any
 
+from blinker import Signal
 from pybit.unified_trading import WebSocket
 
 from tcore.models.coin import Coin, CoinSnapshot
 from tcore.models.config import EngineConfig
 from tcore.models.cvd import CVD
-from tcore.models.enums import OrderSide, EventType, SignalStatus
+from tcore.models.enums import OrderSide, EventType, EventCode
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 class TradingEngine(object):
+    event = Signal("sender: str, event: EventCode, data: StrategyData")
+
     def __init__(self, config: EngineConfig, coin_validator: CoinValidator, strategies: list[BaseStrategy]) -> None:
         self._config = config
         self._coin_validator = coin_validator
@@ -79,7 +82,7 @@ class TradingEngine(object):
     def _execute_strategy(
             strategy: BaseStrategy,
             snapshot: CoinSnapshot
-    ) -> tuple[BaseStrategy, CoinSnapshot, SignalStatus]:
+    ) -> tuple[BaseStrategy, CoinSnapshot, EventCode]:
         return strategy, snapshot, strategy.execute(snapshot)
 
     def _enqueue(self, queue: asyncio.Queue, *items: Any) -> None:
@@ -262,10 +265,18 @@ class TradingEngine(object):
 
                 results = await asyncio.gather(*futures)
 
-                for strategy, snapshot, result in results:
-                    logger.debug(f"[{snapshot.symbol}] Status: {result.name}")
-                    if result == SignalStatus.ENTRY:
-                        self._open_trade(strategy, snapshot.symbol)
+                for strategy, snapshot, event in results:
+                    logger.debug(f"[{snapshot.symbol}] Event: {event.name}")
+
+                    if event in [EventCode.TRACKING, EventCode.ENTRY]:
+                        await self.event.send_async(
+                            self.__class__.__name__,
+                            event=event,
+                            data=strategy.get_data(snapshot)
+                        )
+
+                        if event == EventCode.ENTRY:
+                            self._open_trade(strategy, snapshot.symbol)
 
             except Exception as exception:
                 logger.exception(f"Strategy execution error: {exception}")
@@ -615,9 +626,7 @@ class TradingEngine(object):
 
             logger.info(f"Downloads coins history data #{len(self._ws_connections) + 1}...")
 
-            await asyncio.gather(
-                *[self._update_coin_history(symbol) for symbol in chunk if symbol in actual_symbols]
-            )
+            await asyncio.gather(*[self._update_coin_history(symbol) for symbol in chunk if symbol in actual_symbols])
 
             ws = self._create_connection(chunk)
 

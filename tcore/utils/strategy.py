@@ -1,12 +1,26 @@
 from abc import ABC, abstractmethod
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+from functools import partial
 
 from tcore.models.coin import CoinSnapshot, Data
-from tcore.models.enums import MarketInterval, DataType, SignalStatus
+from tcore.models.enums import MarketInterval, DataType, EventCode
 from tcore.models.funding import FundingRate
 from tcore.models.kline import Kline
 from tcore.models.oi import OpenInterest
+
+
+@dataclass(slots=True)
+class StrategyData:
+    symbols: str
+    intervals: tuple
+    ois: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
+    cvds: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
+    funding_rates: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
+    volumes: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
+    prices: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
 
 
 class BaseStrategy(ABC):
@@ -59,8 +73,40 @@ class BaseStrategy(ABC):
         return self.close_timestamp - timedelta(minutes=self._interval.value)
 
     @abstractmethod
-    def execute(self, snapshot: CoinSnapshot) -> SignalStatus:
+    def execute(self, snapshot: CoinSnapshot) -> EventCode:
         ...
+
+    def get_data(
+            self,
+            snapshot: CoinSnapshot,
+            intervals: tuple = (MarketInterval.M5, MarketInterval.M15, MarketInterval.M30, MarketInterval.H1),
+            length: int = 1
+    ) -> StrategyData:
+        strategy_data = StrategyData(snapshot.symbol, intervals)
+        for interval in intervals:
+            for data_type in DataType:
+                if data_type == DataType.KLINE:
+                    strategy_data.prices[interval] = self.value_changes(
+                        snapshot.aggregate(data_type, interval),
+                        length,
+                        is_price=True
+                    )
+                    strategy_data.volumes[interval] = self.value_changes(
+                        snapshot.aggregate(data_type, interval),
+                        length,
+                        is_turnover=True
+                    )
+                else:
+                    changes = self.value_changes(snapshot.aggregate(data_type, interval), length)
+
+                    if data_type == DataType.OPEN_INTEREST:
+                        strategy_data.ois[interval] = changes
+                    elif data_type == DataType.CVD:
+                        strategy_data.cvds[interval] = changes
+                    else:
+                        strategy_data.funding_rates[interval] = changes
+
+        return strategy_data
 
 
 class ShortStrategy(BaseStrategy):
@@ -141,7 +187,7 @@ class ShortStrategy(BaseStrategy):
 
         return True
 
-    def execute(self, snapshot: CoinSnapshot) -> SignalStatus:
+    def execute(self, snapshot: CoinSnapshot) -> EventCode:
         # Проверка на текущий интервал
         if not all(
                 (
@@ -151,25 +197,25 @@ class ShortStrategy(BaseStrategy):
                         snapshot.validate(self.close_timestamp, DataType.OPEN_INTEREST, self.interval)
                 )
         ):
-            return SignalStatus.WAITING
+            return EventCode.WAITING
 
         if snapshot.symbol in self._tracking:
             if self._end_step(snapshot):
                 self._tracking.remove(snapshot.symbol)
 
-                return SignalStatus.ENTRY
+                return EventCode.ENTRY
             else:
                 if self._first_step(snapshot):
-                    return SignalStatus.TRACKING
+                    return EventCode.TRACKING
                 else:
                     self._tracking.remove(snapshot.symbol)
 
-                    return SignalStatus.NOT_SUITABLE
+                    return EventCode.NOT_SUITABLE
 
         else:
             if self._first_step(snapshot):
                 self._tracking.add(snapshot.symbol)
 
-                return SignalStatus.TRACKING
+                return EventCode.TRACKING
             else:
-                return SignalStatus.NOT_SUITABLE
+                return EventCode.NOT_SUITABLE
