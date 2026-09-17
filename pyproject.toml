@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "tcore/__init__.py"
+
+[project]
+name = "tcore"
+dynamic = ["version"]
+authors = [
+  { name="Beskrovny A.S. [LilBeng]", email="beskrovnyas@gmail.com" },
+]

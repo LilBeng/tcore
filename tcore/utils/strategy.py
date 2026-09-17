@@ -65,7 +65,8 @@ class BaseStrategy(ABC):
         for previous, current in zip(values, values[1:]):
             if previous == 0:
                 changes.append(Decimal(0))
-            changes.append((current - previous) / previous * 100)
+            else:
+                changes.append((current - previous) / previous * 100)
         return changes
 
     @property
