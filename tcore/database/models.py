@@ -52,7 +52,6 @@ class CVDDB(Base):
     timestamp: Mapped[datetime] = mapped_column(TimestampType(), primary_key=True)
 
     value: Mapped[Decimal] = mapped_column(DecimalType())
-    delta: Mapped[Decimal] = mapped_column(DecimalType())
 
 
 class UserDB(Base):
