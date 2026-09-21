@@ -140,7 +140,7 @@ class ShortStrategy(BaseStrategy):
                 return False
 
             if is_up:
-                return all([value > 0 for value in values])
+                return all([value >= 0 for value in values])
             else:
                 return all([value < 0 for value in values])
 
@@ -160,11 +160,15 @@ class ShortStrategy(BaseStrategy):
                 if data_type == DataType.KLINE:
                     price_changes = self._get_values(snapshot, data_type, interval, 1, is_price=True)
 
+                    if not self._check(snapshot, data_type, interval, 1, True, is_price=True):
+                        return False
+
                     if not self._check(snapshot, data_type, interval, 1, True, is_turnover=True):
                         return False
+
                 else:
                     if data_type == DataType.OPEN_INTEREST:
-                        oi_changes = self._get_values(snapshot, data_type, interval, 1, is_price=True)
+                        oi_changes = self._get_values(snapshot, data_type, interval, 1)
 
                     if not self._check(snapshot, data_type, interval, 1, True):
                         return False
@@ -176,8 +180,8 @@ class ShortStrategy(BaseStrategy):
         return True
 
     def _end_step(self, snapshot: CoinSnapshot) -> bool:
-        # Проверка падения показателей последних значений на сетках 5, 15, 30 минут
-        for interval in [MarketInterval.M5, MarketInterval.M15, MarketInterval.M30]:
+        # Проверка падения показателей последних значений на сетках 15, 30 минут
+        for interval in [MarketInterval.M15, MarketInterval.M30]:
             for data_type in [DataType.CVD, DataType.KLINE]:
                 if data_type == DataType.KLINE:
                     if self._check(snapshot, data_type, interval, 1, False, is_turnover=True):
