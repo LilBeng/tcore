@@ -68,7 +68,7 @@ class MarketDataDBWriter(object):
         self._task = asyncio.create_task(self._worker())
 
     async def stop(self) -> None:
-        logger.info("Stopping Market data database writer... ")
+        logger.info("Stopping Market values database writer... ")
 
         if self._task is None:
             return None
@@ -87,7 +87,7 @@ class MarketDataDBWriter(object):
 
     async def _worker(self) -> None:
         try:
-            logger.info("Market data database writer started")
+            logger.info("Market values database writer started")
             while True:
                 try:
                     record = await asyncio.wait_for(
@@ -116,7 +116,7 @@ class MarketDataDBWriter(object):
             await self._flush_buffer(record.symbol, type(record.data), buffer)
 
     async def _flush(self) -> None:
-        logger.debug(f"Write {len(self._buffers)} data buffer to DB...")
+        logger.debug(f"Write {len(self._buffers)} values buffer to DB...")
         for (symbol, data_type), buffer in list(self._buffers.items()):
             if buffer:
                 await self._flush_buffer(symbol, data_type, buffer)

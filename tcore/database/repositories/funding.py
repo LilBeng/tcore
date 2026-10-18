@@ -15,14 +15,14 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
     def _to_entity(self, model: FundingRateDB) -> FundingRate:
         return FundingRate(
             timestamp=model.timestamp,
-            rate=model.rate
+            value=model.value
         )
 
     def _to_values(self, symbol: str, entity: FundingRate) -> dict:
         return {
             "symbol": symbol,
             "timestamp": entity.timestamp,
-            "rate": entity.rate
+            "value": entity.value
         }
 
     async def get_periods(
@@ -41,7 +41,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
         subquery = (
             select(
                 self.model.timestamp,
-                self.model.rate,
+                self.model.value,
                 period,
                 first
             )
@@ -52,7 +52,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
         statement = (
             select(
                 subquery.c.period,
-                func.max(case((subquery.c.first == 1, subquery.c.rate))).label("rate")
+                func.max(case((subquery.c.first == 1, subquery.c.rate))).label("value")
             )
             .group_by(subquery.c.period)
             .order_by(subquery.c.period.desc())
@@ -70,7 +70,7 @@ class FundingRateRepository(BaseRepository[FundingRateDB, FundingRate]):
         return [
             FundingRate(
                 timestamp=datetime.fromtimestamp(row.period / 1000, timezone.utc),
-                rate=row.rate
+                value=row.value
             )
             for row in rows
         ]

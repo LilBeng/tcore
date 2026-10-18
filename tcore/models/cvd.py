@@ -5,5 +5,5 @@ from decimal import Decimal
 
 @dataclass(slots=True)
 class CVD:
-    timestamp: datetime
+    timestamp: datetime  # Open timestamp
     value: Decimal

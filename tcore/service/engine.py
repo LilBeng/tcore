@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class TradingEngine(object):
-    event = Signal("sender: str, event: EventCode, data: StrategyData")
+    event = Signal("sender: str, event: EventCode, values: StrategyData")
 
     def __init__(self, config: EngineConfig, coin_validator: CoinValidator, strategies: list[BaseStrategy]) -> None:
         self._config = config
@@ -151,7 +151,7 @@ class TradingEngine(object):
                 symbol,
                 FundingRate(
                     timestamp=period_end,
-                    rate=ticker.funding_rate
+                    value=ticker.funding_rate
                 )
             )
 
@@ -195,7 +195,7 @@ class TradingEngine(object):
                 coin.add_funding_rate(funding_rate)
 
     async def _worker_market_data(self) -> None:
-        logger.info("Market data worker started")
+        logger.info("Market values worker started")
 
         while True:
             event = await self._market_queue.get()
@@ -268,14 +268,14 @@ class TradingEngine(object):
                 for strategy, snapshot, event in results:
                     logger.debug(f"[{snapshot.symbol}] Event: {event.name}")
 
-                    if event in [EventCode.TRACKING, EventCode.ENTRY]:
+                    if event not in [EventCode.WAITING, EventCode.TRADE]:
                         await self.event.send_async(
                             self.__class__.__name__,
                             event=event,
                             data=strategy.get_data(snapshot)
                         )
 
-                        if event == EventCode.ENTRY:
+                        if event == EventCode.TRADE:
                             self._open_trade(strategy, snapshot.symbol)
 
             except Exception as exception:
@@ -443,7 +443,7 @@ class TradingEngine(object):
         if symbol not in self._coins:
             return None
 
-        data = msg.get("data")
+        data = msg.get("values")
         if not data:
             return None
 
@@ -468,7 +468,7 @@ class TradingEngine(object):
         if symbol not in self._coins:
             return None
 
-        data = msg.get("data")
+        data = msg.get("values")
         if not data:
             return None
 
@@ -494,7 +494,7 @@ class TradingEngine(object):
         if symbol not in self._coins:
             return None
 
-        data_list = msg.get("data")
+        data_list = msg.get("values")
         if not data_list:
             return None
 
@@ -576,7 +576,7 @@ class TradingEngine(object):
 
     async def start(self, symbols: Optional[list] = None) -> None:
         if self._running:
-            logger.warning("Market data stream already running")
+            logger.warning("Market values stream already running")
             return None
 
         await self._market_service.start()
@@ -602,7 +602,7 @@ class TradingEngine(object):
 
         self._market_data_task = asyncio.create_task(
             self._worker_market_data(),
-            name="market-data-worker"
+            name="market-values-worker"
         )
 
         self._strategy_executor_task = asyncio.create_task(
@@ -624,7 +624,7 @@ class TradingEngine(object):
         for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
             chunk = symbols_to_subscribe[start:start + self._config.max_subscribe_size]
 
-            logger.info(f"Downloads coins history data #{len(self._ws_connections) + 1}...")
+            logger.info(f"Downloads coins history values #{len(self._ws_connections) + 1}...")
 
             await asyncio.gather(*[self._update_coin_history(symbol) for symbol in chunk if symbol in actual_symbols])
 
@@ -640,7 +640,7 @@ class TradingEngine(object):
         if not self._running:
             return None
 
-        logger.info("Stopping market data stream...")
+        logger.info("Stopping market values stream...")
 
         self._running = False
 
@@ -686,4 +686,4 @@ class TradingEngine(object):
 
         self._loop = None
 
-        logger.info("Market data stream stopped")
+        logger.info("Market values stream stopped")

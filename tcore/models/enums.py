@@ -3,7 +3,6 @@ from typing import Optional
 
 
 class InstrumentStatus(str, Enum):
-    """Статус инструмента"""
     PRE_LAUNCH = "PreLaunch"
     TRADING = "Trading"
     DELIVERING = "Delivering"
@@ -122,8 +121,15 @@ class DataType(int, Enum):
     CVD = 3
 
 
+class ValueType(int, Enum):
+    PRICE = 0
+    VOLUME_SMA_9 = 1
+    OPEN_INTEREST = 2
+    FUNDING_RATE = 3
+    CVD = 4
+
+
 class EventCode(Enum):
     WAITING = 0
-    NOT_SUITABLE = 1
-    TRACKING = 2
-    ENTRY = 3
+    GROWTH = 1
+    TRADE = 3

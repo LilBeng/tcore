@@ -4,23 +4,21 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from functools import partial
+from typing import DefaultDict
 
-from tcore.models.coin import CoinSnapshot, Data
-from tcore.models.enums import MarketInterval, DataType, EventCode
-from tcore.models.funding import FundingRate
-from tcore.models.kline import Kline
-from tcore.models.oi import OpenInterest
+from tcore.models.coin import CoinSnapshot
+from tcore.models.enums import MarketInterval, DataType, EventCode, ValueType
+from tcore.utils.enums import Operator
+from tcore.utils.indicator import sma
 
 
 @dataclass(slots=True)
 class StrategyData:
     symbols: str
-    intervals: tuple
-    ois: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
-    cvds: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
-    funding_rates: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
-    volumes: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
-    prices: dict[MarketInterval, list[Decimal]] = field(default_factory=partial(defaultdict, list))
+    close_timestamp: datetime
+    values: DefaultDict[MarketInterval, DefaultDict[ValueType, list[Decimal]]] = field(
+        default_factory=partial(defaultdict, partial(defaultdict, list))
+    )
 
 
 class BaseStrategy(ABC):
@@ -44,26 +42,47 @@ class BaseStrategy(ABC):
         )
 
     @staticmethod
-    def value_changes(array: list[Data], count: int = 1, **kwargs) -> list[Decimal]:
+    def get_value_changes(
+            snapshot: CoinSnapshot,
+            value_type: ValueType,
+            interval: MarketInterval,
+            length: int,
+    ) -> list[Decimal]:
+
+        if value_type in [ValueType.PRICE, ValueType.VOLUME_SMA_9]:
+            data_type = DataType.KLINE
+        elif value_type == ValueType.OPEN_INTEREST:
+            data_type = DataType.OPEN_INTEREST
+        elif value_type == ValueType.CVD:
+            data_type = DataType.CVD
+        elif value_type == ValueType.FUNDING_RATE:
+            data_type = DataType.FUNDING_RATE
+        else:
+            return []
+
         values = []
-        for obj in array[-count - 1:]:
-            if isinstance(obj, Kline):
-                if kwargs.get("is_turnover"):
-                    values.append(obj.turnover)
-                elif kwargs.get("is_volume"):
-                    values.append(obj.volume)
-                elif kwargs.get("is_price"):
-                    values.append(obj.close)
-            elif isinstance(obj, OpenInterest):
+
+        array = snapshot.aggregate(data_type, interval)
+        if value_type == ValueType.VOLUME_SMA_9:
+            array = sma([obj.volume for obj in array], 9)
+
+        for obj in array[-length - 1:]:
+            if value_type == ValueType.PRICE:
+                values.append(obj.close)
+            elif value_type == ValueType.VOLUME_SMA_9:
+                values.append(obj)
+            elif value_type == ValueType.OPEN_INTEREST:
                 values.append(obj.single_open_interest)
-            elif isinstance(obj, FundingRate):
-                values.append(obj.rate)
-            else:
+            elif value_type == ValueType.CVD:
                 values.append(obj.value)
+            elif value_type == ValueType.FUNDING_RATE:
+                values.append(obj.value)
+            else:
+                return []
 
         changes = []
         for previous, current in zip(values, values[1:]):
-            if previous == 0:
+            if not previous:
                 changes.append(Decimal(0))
             else:
                 changes.append((current - previous) / previous * 100)
@@ -83,29 +102,15 @@ class BaseStrategy(ABC):
             intervals: tuple = (MarketInterval.M5, MarketInterval.M15, MarketInterval.M30, MarketInterval.H1),
             length: int = 1
     ) -> StrategyData:
-        strategy_data = StrategyData(snapshot.symbol, intervals)
+        strategy_data = StrategyData(snapshot.symbol, self.close_timestamp)
         for interval in intervals:
-            for data_type in DataType:
-                if data_type == DataType.KLINE:
-                    strategy_data.prices[interval] = self.value_changes(
-                        snapshot.aggregate(data_type, interval),
-                        length,
-                        is_price=True
-                    )
-                    strategy_data.volumes[interval] = self.value_changes(
-                        snapshot.aggregate(data_type, interval),
-                        length,
-                        is_turnover=True
-                    )
-                else:
-                    changes = self.value_changes(snapshot.aggregate(data_type, interval), length)
-
-                    if data_type == DataType.OPEN_INTEREST:
-                        strategy_data.ois[interval] = changes
-                    elif data_type == DataType.CVD:
-                        strategy_data.cvds[interval] = changes
-                    else:
-                        strategy_data.funding_rates[interval] = changes
+            for value_type in ValueType:
+                strategy_data.values[interval][value_type] = self.get_value_changes(
+                    snapshot,
+                    value_type,
+                    interval,
+                    length
+                )
 
         return strategy_data
 
@@ -116,79 +121,55 @@ class ShortStrategy(BaseStrategy):
 
         self._tracking: set[str] = set()
 
-    def _get_values(
-            self,
-            snapshot: CoinSnapshot,
-            data_type: DataType,
-            interval: MarketInterval,
-            length: int,
-            **kwargs
-    ) -> list[Decimal]:
-        return self.value_changes(snapshot.aggregate(data_type, interval), length, **kwargs)
-
     def _check(
             self,
             snapshot: CoinSnapshot,
-            data_type: DataType,
+            value_type: ValueType,
             interval: MarketInterval,
             length: int,
-            is_up: bool,
-            **kwargs
+            operator: Operator,
+            base_value: int = 0
     ) -> bool:
-        if values := self._get_values(snapshot, data_type, interval, length, **kwargs):
+        if values := self.get_value_changes(snapshot, value_type, interval, length):
             if len(values) < length:
                 return False
 
-            if is_up:
-                return all([value >= 0 for value in values])
-            else:
-                return all([value < 0 for value in values])
+            return all([operator.value(value, base_value) for value in values])
 
         return False
 
-    def _first_step(self, snapshot) -> bool:
+    def _check_grown(self, snapshot: CoinSnapshot) -> bool:
         # Проверка роста открытого интереса на сетке 15 минут (последние 5 значений)
-        if not self._check(snapshot, DataType.OPEN_INTEREST, MarketInterval.M15, 5, True):
+        if not self._check(snapshot, ValueType.OPEN_INTEREST, MarketInterval.M15, 5, Operator.GE):
             return False
 
         # Проверка роста показателей последних значений на сетках 5, 15, 30, 60 минут
         # Проверка, что рост открытого интереса выше роста цены на сетках 5, 15, 30, 60 минут
         for interval in [MarketInterval.M5, MarketInterval.M15, MarketInterval.M30, MarketInterval.H1]:
-            oi_changes = []
-            price_changes = []
-            for data_type in DataType:
-                if data_type == DataType.KLINE:
-                    price_changes = self._get_values(snapshot, data_type, interval, 1, is_price=True)
+            for value_type in [
+                ValueType.PRICE,
+                ValueType.VOLUME_SMA_9,
+                ValueType.OPEN_INTEREST,
+                ValueType.CVD,
+                ValueType.FUNDING_RATE
+            ]:
+                if not self._check(snapshot, value_type, interval, 1, Operator.GE):
+                    return False
 
-                    if not self._check(snapshot, data_type, interval, 1, True, is_price=True):
-                        return False
-
-                    if not self._check(snapshot, data_type, interval, 1, True, is_turnover=True):
-                        return False
-
-                else:
-                    if data_type == DataType.OPEN_INTEREST:
-                        oi_changes = self._get_values(snapshot, data_type, interval, 1)
-
-                    if not self._check(snapshot, data_type, interval, 1, True):
-                        return False
-
+            oi_changes = self.get_value_changes(snapshot, ValueType.OPEN_INTEREST, interval, 1)
+            price_changes = self.get_value_changes(snapshot, ValueType.PRICE, interval, 1)
             for oi, price in zip(oi_changes, price_changes):
                 if oi < price:
                     return False
 
         return True
 
-    def _end_step(self, snapshot: CoinSnapshot) -> bool:
+    def _check_fall(self, snapshot: CoinSnapshot) -> bool:
         # Проверка падения показателей последних значений на сетках 15, 30 минут
         for interval in [MarketInterval.M15, MarketInterval.M30]:
-            for data_type in [DataType.CVD, DataType.KLINE]:
-                if data_type == DataType.KLINE:
-                    if self._check(snapshot, data_type, interval, 1, False, is_turnover=True):
-                        return False
-                else:
-                    if not self._check(snapshot, data_type, interval, 1, False):
-                        return False
+            for value_type in [ValueType.VOLUME_SMA_9,  ValueType.CVD]:
+                if not self._check(snapshot, value_type, interval, 1, Operator.LT):
+                    return False
 
         return True
 
@@ -205,22 +186,22 @@ class ShortStrategy(BaseStrategy):
             return EventCode.WAITING
 
         if snapshot.symbol in self._tracking:
-            if self._end_step(snapshot):
+            if self._check_fall(snapshot):
                 self._tracking.remove(snapshot.symbol)
 
-                return EventCode.ENTRY
+                return EventCode.TRADE
             else:
-                if self._first_step(snapshot):
-                    return EventCode.TRACKING
+                if self._check_grown(snapshot):
+                    return EventCode.GROWTH
                 else:
                     self._tracking.remove(snapshot.symbol)
 
-                    return EventCode.NOT_SUITABLE
+                    return EventCode.WAITING
 
         else:
-            if self._first_step(snapshot):
+            if self._check_grown(snapshot):
                 self._tracking.add(snapshot.symbol)
 
-                return EventCode.TRACKING
+                return EventCode.GROWTH
             else:
-                return EventCode.NOT_SUITABLE
+                return EventCode.WAITING

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 @dataclass(slots=True)
 class Kline:
-    timestamp: datetime
+    timestamp: datetime  # Open timestamp
     open: Decimal
     high: Decimal
     low: Decimal

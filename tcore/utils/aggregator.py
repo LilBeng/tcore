@@ -92,7 +92,7 @@ class DataAggregator(object):
             result.append(
                 FundingRate(
                     timestamp=timestamp,
-                    rate=item.rate
+                    value=item.value
                 )
             )
 

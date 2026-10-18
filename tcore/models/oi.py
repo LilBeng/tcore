@@ -5,7 +5,7 @@ from decimal import Decimal
 
 @dataclass(slots=True)
 class OpenInterest:
-    timestamp: datetime
+    timestamp: datetime  # Close timestamp
     open_interest: Decimal
     single_open_interest: Decimal
 

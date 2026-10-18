@@ -9,6 +9,26 @@ def _closes(klines: list[Kline]) -> list[Decimal]:
     return [k.close for k in klines]
 
 
+def sma(values: list[Decimal], period: int) -> list[Decimal]:
+    if period <= 0:
+        raise ValueError(f"period must be positive, got {period}")
+
+    result = []
+    window_sum = Decimal(0)
+    divisor = Decimal(period)
+
+    for i, value in enumerate(values):
+        window_sum += value
+
+        if i >= period:
+            window_sum -= values[i - period]
+
+        if i >= period - 1:
+            result.append(window_sum / divisor)
+
+    return result
+
+
 def ema(values: list[Decimal], period: int) -> Optional[Decimal]:
     if len(values) < period:
         return None
@@ -22,22 +42,13 @@ def ema(values: list[Decimal], period: int) -> Optional[Decimal]:
     return result
 
 
-def sma(klines: list[Kline], period: int = 50) -> Optional[Decimal]:
-    if len(klines) < period:
+def rsi(values: list[Decimal], period: int = 14) -> Optional[Decimal]:
+    if len(values) < period + 1:
         return None
 
-    return sum((k.close for k in klines[-period:]), Decimal(0)) / period
-
-
-def rsi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
-    if len(klines) < period + 1:
-        return None
-
-    closes = _closes(klines)
     gains, losses = [], []
-
-    for i in range(1, len(closes)):
-        change = closes[i] - closes[i - 1]
+    for i in range(1, len(values)):
+        change = values[i] - values[i - 1]
         gains.append(max(change, Decimal(0)))
         losses.append(max(-change, Decimal(0)))
 
@@ -56,26 +67,24 @@ def rsi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
 
 
 def macd(
-        klines: list[Kline],
+        values: list[Decimal],
         fast: int = 12,
         slow: int = 26,
         signal: int = 9
 ) -> Optional[tuple[Decimal, Decimal, Decimal]]:
-    if len(klines) < slow + signal - 1:
+    if len(values) < slow + signal - 1:
         return None
-
-    closes = _closes(klines)
 
     fast_ema = []
     slow_ema = []
 
-    fast_value = sum(closes[:fast], Decimal(0)) / fast
-    slow_value = sum(closes[:slow], Decimal(0)) / slow
+    fast_value = sum(values[:fast], Decimal(0)) / fast
+    slow_value = sum(values[:slow], Decimal(0)) / slow
 
     fast_mult = Decimal(2) / (fast + 1)
     slow_mult = Decimal(2) / (slow + 1)
 
-    for i, close in enumerate(closes):
+    for i, close in enumerate(values):
         if i >= fast:
             fast_value += (close - fast_value) * fast_mult
 
@@ -147,17 +156,15 @@ def cci(klines: list[Kline], period: int = 20) -> Optional[Decimal]:
 
 
 def bollinger_bands(
-    klines: list[Kline],
+    values: list[Decimal],
     period: int = 20,
     deviations: Decimal = Decimal(2)
 ) -> Optional[tuple[Decimal, Decimal, Decimal]]:
-    if len(klines) < period:
+    if len(values) < period:
         return None
 
-    closes = [k.close for k in klines[-period:]]
-
-    middle = sum(closes, Decimal(0)) / period
-    variance = sum((x - middle) ** 2 for x in closes) / period
+    middle = sum(values[-period:], Decimal(0)) / period
+    variance = sum((x - middle) ** 2 for x in values[-period:]) / period
     std = Decimal(sqrt(variance))
 
     return middle + deviations * std, middle, middle - deviations * std
@@ -177,15 +184,14 @@ def williams_r(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
     return Decimal(-100) * (highest - values[-1].close) / (highest - lowest)
 
 
-def stoch_rsi(klines: list[Kline], period: int = 14) -> Optional[Decimal]:
-    if len(klines) < period * 2:
+def stoch_rsi(values: list[Decimal], period: int = 14) -> Optional[Decimal]:
+    if len(values) < period * 2:
         return None
 
-    closes = _closes(klines)
     gains, losses = [], []
 
-    for i in range(1, len(closes)):
-        change = closes[i] - closes[i - 1]
+    for i in range(1, len(values)):
+        change = values[i] - values[i - 1]
         gains.append(max(change, Decimal(0)))
         losses.append(max(-change, Decimal(0)))
 

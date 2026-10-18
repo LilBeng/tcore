@@ -1,19 +1,9 @@
-import operator
 from dataclasses import dataclass, field
 from decimal import Decimal
-from enum import Enum
 from typing import Union
 
 from tcore.models.coin import Coin
-
-
-class Operator(Enum):
-    LT = operator.lt
-    LE = operator.le
-    GT = operator.gt
-    GE = operator.ge
-    EQ = operator.eq
-    NE = operator.ne
+from tcore.utils.enums import Operator
 
 
 @dataclass(slots=True)
@@ -30,7 +20,9 @@ class Validator:
     conditions: list[Condition] = field(default_factory=list)
 
     def validate(self, value: Union[int, float, Decimal]) -> bool:
-        return all(condition.check(value) for condition in self.conditions)
+        if self.conditions:
+            return all(condition.check(value) for condition in self.conditions)
+        return True
 
 
 @dataclass(slots=True)

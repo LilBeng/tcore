@@ -42,7 +42,7 @@ class FundingRateDB(Base):
     symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(TimestampType(), primary_key=True)
 
-    rate: Mapped[Decimal] = mapped_column(DecimalType())
+    value: Mapped[Decimal] = mapped_column(DecimalType())
 
 
 class CVDDB(Base):
