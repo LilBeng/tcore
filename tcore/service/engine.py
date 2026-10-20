@@ -268,7 +268,7 @@ class TradingEngine(object):
                 for strategy, snapshot, event in results:
                     logger.debug(f"[{snapshot.symbol}] Event: {event.name}")
 
-                    if event not in [EventCode.WAITING, EventCode.TRADE]:
+                    if event != EventCode.WAITING:
                         await self.event.send_async(
                             self.__class__.__name__,
                             event=event,
@@ -443,7 +443,7 @@ class TradingEngine(object):
         if symbol not in self._coins:
             return None
 
-        data = msg.get("values")
+        data = msg.get("data")
         if not data:
             return None
 
@@ -468,7 +468,7 @@ class TradingEngine(object):
         if symbol not in self._coins:
             return None
 
-        data = msg.get("values")
+        data = msg.get("data")
         if not data:
             return None
 
@@ -490,11 +490,10 @@ class TradingEngine(object):
             return None
 
         symbol = parts[-1]
-
         if symbol not in self._coins:
             return None
 
-        data_list = msg.get("values")
+        data_list = msg.get("data")
         if not data_list:
             return None
 
@@ -576,7 +575,7 @@ class TradingEngine(object):
 
     async def start(self, symbols: Optional[list] = None) -> None:
         if self._running:
-            logger.warning("Market values stream already running")
+            logger.warning("Market data stream already running")
             return None
 
         await self._market_service.start()
@@ -602,7 +601,7 @@ class TradingEngine(object):
 
         self._market_data_task = asyncio.create_task(
             self._worker_market_data(),
-            name="market-values-worker"
+            name="market-data-worker"
         )
 
         self._strategy_executor_task = asyncio.create_task(
@@ -624,7 +623,7 @@ class TradingEngine(object):
         for start in range(0, len(symbols_to_subscribe), self._config.max_subscribe_size):
             chunk = symbols_to_subscribe[start:start + self._config.max_subscribe_size]
 
-            logger.info(f"Downloads coins history values #{len(self._ws_connections) + 1}...")
+            logger.info(f"Downloads coins history data #{len(self._ws_connections) + 1}...")
 
             await asyncio.gather(*[self._update_coin_history(symbol) for symbol in chunk if symbol in actual_symbols])
 
@@ -640,7 +639,7 @@ class TradingEngine(object):
         if not self._running:
             return None
 
-        logger.info("Stopping market values stream...")
+        logger.info("Stopping market data stream...")
 
         self._running = False
 
@@ -686,4 +685,4 @@ class TradingEngine(object):
 
         self._loop = None
 
-        logger.info("Market values stream stopped")
+        logger.info("Market data stream stopped")

@@ -132,4 +132,4 @@ class ValueType(int, Enum):
 class EventCode(Enum):
     WAITING = 0
     GROWTH = 1
-    TRADE = 3
+    TRADE = 2
