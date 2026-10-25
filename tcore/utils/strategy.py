@@ -154,10 +154,10 @@ class ShortStrategy(BaseStrategy):
                 ValueType.CVD,
                 ValueType.FUNDING_RATE
             ]:
-                if value_type in [ValueType.PRICE, ValueType.OPEN_INTEREST, ValueType.VOLUME_SMA_9]:
-                    operator = Operator.GE
-                else:
+                if value_type == ValueType.CVD:
                     operator = Operator.GT
+                else:
+                    operator = Operator.GE
 
                 if not self._check(snapshot, value_type, interval, 1, operator):
                     return False
