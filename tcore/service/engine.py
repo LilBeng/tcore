@@ -35,6 +35,9 @@ class TradingEngine(object):
         self._coin_validator = coin_validator
         self._strategies = strategies
 
+        for strategy in strategies:
+            assert config.interval <= strategy.interval
+
         self._coins: dict[str, Coin] = {}
         self._ws_connections: dict[WebSocket, set[str]] = defaultdict(set)
         self._states: dict[str, PeriodState] = {}

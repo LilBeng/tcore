@@ -36,10 +36,11 @@ class BaseStrategy(ABC):
 
     @property
     def close_timestamp(self) -> datetime:
-        step = int(self._interval) * 60
-        now = datetime.now(timezone.utc)
-        ts = int(now.timestamp())
-        return datetime.fromtimestamp(ts - ts % step + step, tz=timezone.utc)
+        dt = datetime.now(timezone.utc)
+        return dt.replace(
+            minute=(dt.minute // self._interval.value) * self._interval.value,
+            second=0, microsecond=0,
+        )
 
     @staticmethod
     def get_value_changes(
