@@ -15,19 +15,15 @@ T = TypeVar("T")
 class DataAggregator(object):
     @staticmethod
     def _period(timestamp: datetime, interval: MarketInterval) -> datetime:
-        minute = timestamp.minute - timestamp.minute % interval
-
-        return timestamp.replace(
-            minute=minute,
-            second=0,
-            microsecond=0
-        )
+        step = int(interval) * 60  # минуты -> секунды
+        ts = int(timestamp.timestamp())
+        return datetime.fromtimestamp(ts - ts % step, tz=timestamp.tzinfo)
 
     @classmethod
     def _group(cls, data: Iterable[T], interval: MarketInterval) -> dict[datetime, list[T]]:
         periods: dict[datetime, list[T]] = defaultdict(list)
 
-        for item in data:
+        for item in sorted(data, key=lambda obj: obj.timestamp):
             periods[cls._period(item.timestamp, interval)].append(item)
 
         return periods

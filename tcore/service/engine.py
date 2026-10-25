@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class TradingEngine(object):
-    event = Signal("sender: str, event: EventCode, values: StrategyData")
+    event = Signal("sender: str, event: EventCode, data: StrategyData")
 
     def __init__(self, config: EngineConfig, coin_validator: CoinValidator, strategies: list[BaseStrategy]) -> None:
         self._config = config

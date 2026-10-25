@@ -15,6 +15,7 @@ from tcore.utils.indicator import sma
 @dataclass(slots=True)
 class StrategyData:
     symbols: str
+    open_timestamp: datetime
     close_timestamp: datetime
     values: DefaultDict[MarketInterval, DefaultDict[ValueType, list[Decimal]]] = field(
         default_factory=partial(defaultdict, partial(defaultdict, list))
@@ -35,11 +36,10 @@ class BaseStrategy(ABC):
 
     @property
     def close_timestamp(self) -> datetime:
-        dt = datetime.now(timezone.utc)
-        return dt.replace(
-            minute=(dt.minute // self._interval.value) * self._interval.value,
-            second=0, microsecond=0,
-        )
+        step = int(self._interval) * 60
+        now = datetime.now(timezone.utc)
+        ts = int(now.timestamp())
+        return datetime.fromtimestamp(ts - ts % step + step, tz=timezone.utc)
 
     @staticmethod
     def get_value_changes(
@@ -102,7 +102,7 @@ class BaseStrategy(ABC):
             intervals: tuple = (MarketInterval.M5, MarketInterval.M15, MarketInterval.M30, MarketInterval.H1),
             length: int = 1
     ) -> StrategyData:
-        strategy_data = StrategyData(snapshot.symbol, self.close_timestamp)
+        strategy_data = StrategyData(snapshot.symbol, self.open_timestamp, self.close_timestamp)
         for interval in intervals:
             for value_type in ValueType:
                 strategy_data.values[interval][value_type] = self.get_value_changes(
