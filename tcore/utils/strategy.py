@@ -69,15 +69,15 @@ class BaseStrategy(ABC):
 
         for obj in array[-length - 1:]:
             if value_type == ValueType.PRICE:
-                values.append(obj.close)
+                values.append(obj.close) # noqa
             elif value_type == ValueType.VOLUME_SMA_9:
                 values.append(obj)
             elif value_type == ValueType.OPEN_INTEREST:
-                values.append(obj.single_open_interest)
+                values.append(obj.single_open_interest) # noqa
             elif value_type == ValueType.CVD:
-                values.append(obj.value)
+                values.append(obj.value) # noqa
             elif value_type == ValueType.FUNDING_RATE:
-                values.append(obj.value)
+                values.append(obj.value) # noqa
             else:
                 return []
 
